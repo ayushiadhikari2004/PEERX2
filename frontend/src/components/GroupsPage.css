@@ -4,7 +4,7 @@
 .groups-grid { display: flex; gap: 16px; margin-bottom: 18px; }
 .card { background: var(--card); padding: 16px; border-radius: 12px; border: 1px solid var(--border); width: 320px; }
 .create-card input, .join-card input { width: 100%; padding: 10px; margin-bottom: 10px; border-radius: 8px; border: 1px solid var(--border); background: transparent; color: var(--text); }
-.card button { padding: 10px 12px; border-radius: 8px; background: #7b5fff; color: white; border: none; }
+.card button { padding: 10px 12px; border-radius: 8px; background: var(--gradient-primary); color: white; border: none; }
 
 .groups-list .list { margin-top: 10px; display: grid; gap: 12px; }
 .group-item { display:flex; justify-content:space-between; align-items:center; padding:12px; border-radius:10px; background: rgba(255,255,255,0.02); border: 1px solid var(--border); }

@@ -2,10 +2,10 @@
   "name": "personalspace-backend",
   "version": "1.0.0",
   "description": "PersonalSpace - Backend Server",
-  "main": "server.js",
+  "main": "server-enhanced.js",
   "scripts": {
-    "start": "node server.js",
-    "dev": "nodemon server.js"
+    "start": "node server-enhanced.js",
+    "dev": "nodemon server-enhanced.js"
   },
   "keywords": [
     "cloud",

@@ -1,0 +1,119 @@
+.file-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  background: var(--bg-surface);
+  padding: var(--space-5);
+  border-radius: var(--radius-xl);
+  border: 1px solid var(--border-color);
+  transition: all var(--transition-normal);
+  position: relative;
+  overflow: hidden;
+}
+
+.file-card:hover {
+  transform: translateY(-4px) scale(1.02);
+  box-shadow: var(--shadow-xl);
+  border-color: var(--color-primary-300);
+}
+
+.file-icon-area {
+  width: 56px;
+  height: 56px;
+  border-radius: var(--radius-md);
+  background: var(--bg-main);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.75rem;
+}
+
+.file-content {
+  flex: 1;
+  min-width: 0; /* needed for text truncation */
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.file-name {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.file-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+
+.file-size {
+  font-weight: 500;
+}
+
+.file-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin-top: var(--space-1);
+}
+
+.file-tag {
+  background: var(--color-primary-50);
+  color: var(--color-primary-700);
+  padding: 0.1rem 0.5rem;
+  border-radius: var(--radius-full);
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+
+.file-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.file-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0.4rem 0.75rem;
+  border-radius: var(--radius-md);
+  font-size: 0.85rem;
+  font-weight: 500;
+  transition: all var(--transition-fast);
+}
+
+.primary-btn {
+  background: var(--bg-main);
+  color: var(--color-primary-600);
+  border: 1px solid var(--border-color);
+}
+
+.primary-btn:hover {
+  background: var(--color-primary-50);
+  border-color: var(--color-primary-300);
+}
+
+.danger-btn {
+  background: var(--bg-main);
+  color: var(--color-error);
+  border: 1px solid var(--border-color);
+}
+
+.danger-btn:hover {
+  background: rgba(239, 68, 68, 0.05);
+  border-color: rgba(239, 68, 68, 0.3);
+}
+
+.icon-only {
+  padding: 0.4rem;
+}

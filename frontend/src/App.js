@@ -1,26 +1,29 @@
 import React, { useState, useEffect } from "react";
 import axios from "axios";
 import { ThemeProvider, useTheme } from "./contexts/ThemeContext";
-import Navbar from "./components/Navbar";
-import Footer from "./components/Footer";
-import CookieBanner from "./components/CookieBanner";
+
+// Layout & Pages
+import Layout from "./components/layout/Layout";
+import AuthPage from "./pages/AuthPage";
+import DashboardPage from "./pages/DashboardPage";
+import FilesPage from "./pages/FilesPage";
+import PeersPage from "./pages/PeersPage";
+import UploadPage from "./pages/UploadPage";
+import TransfersPage from "./pages/TransfersPage";
+import GroupsPage from "./pages/GroupsPage";
+import ChatPage from "./pages/ChatPage";
+import ProfilePage from "./pages/ProfilePage";
 import FileManager from "./components/FileManager";
+import WebRTCHandler from "./utils/webrtc";
+
 import "./App.css";
 
 const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000/api';
 
-// Axios instance for API calls
-// Build API base URL from environment or current host so network clients
-// (other devices on LAN) will contact the correct backend IP.
 const getAPIBaseURL = () => {
   const hostname = window.location.hostname;
   const protocol = window.location.protocol || 'http:';
-
-  // If explicit env var provided, prefer it
   if (process.env.REACT_APP_API_URL) return process.env.REACT_APP_API_URL;
-
-  // Default: use the same hostname as the browser but target backend port 5000
-  // e.g. http://192.168.1.105:3000 -> http://192.168.1.105:5000/api
   return `${protocol}//${hostname}:5000/api`;
 };
 
@@ -29,12 +32,13 @@ axios.defaults.baseURL = BASE_API;
 const API = axios.create({ baseURL: BASE_API, withCredentials: true });
 
 function AppContent() {
-  const { toggleTheme, isDark } = useTheme();
+  const { toggleTheme, isDark, setTheme } = useTheme();
   const [token, setToken] = useState(localStorage.getItem("token") || "");
   const [user, setUser] = useState(null);
+  
+  // Navigation State
   const [view, setView] = useState("dashboard");
-  const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [breadcrumbs, setBreadcrumbs] = useState(["Home", "Dashboard"]);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   // Form states
   const [loginEmail, setLoginEmail] = useState("");
@@ -43,44 +47,34 @@ function AppContent() {
   const [regEmail, setRegEmail] = useState("");
   const [regPassword, setRegPassword] = useState("");
   const [isLogin, setIsLogin] = useState(true);
+  
+  // Global App States
   const [loading, setLoading] = useState(false);
   const [notification, setNotification] = useState(null);
 
   // Data states
+  const [files, setFiles] = useState([]); // Local received files
+  const [peers, setPeers] = useState([]);
+  const [stats, setStats] = useState({ fileCount: 0, peersOnline: 0 });
+
+  // Groups State
   const [groups, setGroups] = useState([]);
   const [selectedGroup, setSelectedGroup] = useState(null);
-  const [files, setFiles] = useState([]);
-  const [peers, setPeers] = useState([]);
-  const [stats, setStats] = useState({
-    fileCount: 0,
-    groupCount: 0,
-    peersOnline: 0
-  });
-
-  // Form data
   const [groupName, setGroupName] = useState("");
   const [groupDesc, setGroupDesc] = useState("");
   const [groupPrivacy, setGroupPrivacy] = useState(true);
   const [inviteCode, setInviteCode] = useState("");
-  const [uploadFile, setUploadFile] = useState(null);
-  const [tags, setTags] = useState("");
-  const [editingGroup, setEditingGroup] = useState(null);
-  const [editGroupName, setEditGroupName] = useState("");
-  const [editGroupDesc, setEditGroupDesc] = useState("");
-  const [editGroupPrivacy, setEditGroupPrivacy] = useState(true);
 
-  // Profile
-  const [editProfile, setEditProfile] = useState(false);
-  const [editUsername, setEditUsername] = useState("");
-  const [editEmail, setEditEmail] = useState("");
+  // Transfer states for TransferProgress visualizer
+  const [activeTransfers, setActiveTransfers] = useState([]);
   
-  // Settings
-  const [showSettings, setShowSettings] = useState(false);
-  const [settingsTheme, setSettingsTheme] = useState("light");
-  const [emailNotifications, setEmailNotifications] = useState(true);
+  // WebRTC
+  const [webrtc, setWebrtc] = useState(null);
+  const [webrtcPeers, setWebrtcPeers] = useState([]);
+  const [incomingOffers, setIncomingOffers] = useState([]);
 
   /** ======================
-   *  AUTH CHECK + USER DATA
+   *  INIT & REAL-TIME
    ======================== */
   useEffect(() => {
     if (token) {
@@ -95,136 +89,252 @@ function AppContent() {
     }
   }, [token]);
 
+  // Keep dashboard metrics updated
+  useEffect(() => {
+    if (!user) return;
+    fetchStats();
+    const interval = setInterval(() => fetchStats(), 5000);
+    return () => clearInterval(interval);
+  }, [user]);
+
+  const fetchPeers = async () => {
+    try {
+      const res = await API.get("/peers");
+      setPeers(res.data);
+    } catch (err) {}
+  };
+
+  const fetchStats = async () => {
+    try {
+      const res = await API.get("/stats/dashboard");
+      setStats({
+        fileCount: res.data.fileCount || 0,
+        groupCount: res.data.groupCount || 0,
+        peersOnline: res.data.peersOnline || 0,
+        storageUsed: res.data.storageUsed || 0,
+        storageLimit: res.data.storageLimit || 5e9,
+      });
+    } catch (err) {
+      console.error("Fetch stats failed:", err?.response?.data || err?.message || err);
+    }
+  };
+
+  // Persist received P2P files into backend (so they appear in FileManager lists).
+  const importReceivedFileToNetworkShare = async ({ name, blob, mimeType }) => {
+    try {
+      // Ensure the user is in the network share group.
+      await API.post("/groups/join-network").catch(() => {});
+
+      const gRes = await API.get("/groups");
+      const networkGroup = gRes.data.find(
+        (g) => g.name === "__NETWORK_SHARE__" || g.inviteCode === "NETWORK"
+      );
+
+      if (!networkGroup) {
+        notify("Network Share group not found. Cannot persist received file.", "error");
+        return;
+      }
+
+      const groupId = networkGroup.id || networkGroup._id;
+      const folderId = "";
+
+      const fileObj = new File([blob], name, { type: mimeType || "application/octet-stream" });
+      const formData = new FormData();
+      formData.append("file", fileObj);
+      formData.append("groupId", groupId);
+      formData.append("folderId", folderId);
+      formData.append("tags", JSON.stringify(["p2p", "received"]));
+
+      await API.post("/files/upload", formData);
+      // Show file immediately by switching receiver to Network Share group
+      setSelectedGroup(networkGroup);
+      setView("file_manager");
+      notify(`Received via P2P: ${name}`, "success");
+    } catch (err) {
+      console.error("Failed to persist received P2P file:", err);
+      notify("P2P received, but saving to your library failed.", "error");
+    }
+  };
+
   useEffect(() => {
     if (user) {
       const interval = setInterval(() => {
-        fetchGroups();
         fetchPeers();
-        if (selectedGroup) fetchFiles(selectedGroup.id);
-        if (view === "dashboard") fetchStats(); // Real-time dashboard updates
       }, 5000);
-      return () => clearInterval(interval);
+      
+      // Initialize WebRTC on the main server port
+      // WebRTC signaling must be shared by both peers (same Socket.IO server),
+      // while API calls can still point to the receiver's own backend for storage.
+      const signalingUrl = process.env.REACT_APP_SIGNALING_URL || getAPIBaseURL().replace('/api', '');
+      const handler = new WebRTCHandler(
+        signalingUrl,
+        user.id || user._id,
+        user.username,
+        (peersList) => {
+          setWebrtcPeers(peersList);
+        },
+        (progressUpdate) => {
+          setActiveTransfers(prev => {
+            const index = prev.findIndex(t => t.id === progressUpdate.id);
+            if (index >= 0) {
+              const updated = [...prev];
+              updated[index] = progressUpdate;
+              // Add to local files if complete and download
+              if (progressUpdate.status === 'complete' && progressUpdate.type === 'download') {
+                  setFiles(curr => {
+                      const exists = curr.find(f => f.name === progressUpdate.fileName);
+                      if (!exists) {
+                          return [{
+                              id: Date.now() + Math.random(),
+                              name: progressUpdate.fileName,
+                              size: progressUpdate.totalSize,
+                              receivedAt: new Date().toISOString()
+                          }, ...curr];
+                      }
+                      return curr;
+                  });
+              }
+              // Remove complete transfers after 3 seconds
+              if (progressUpdate.status === 'complete') {
+                setTimeout(() => {
+                  setActiveTransfers(curr => curr.filter(t => t.id !== progressUpdate.id));
+                }, 3000);
+              }
+              return updated;
+            } else {
+              if (progressUpdate.status === 'complete') return prev; // don't add completed ones right away
+              return [...prev, progressUpdate];
+            }
+          });
+        },
+        (offerInfo, acceptCallback, rejectCallback) => {
+           setIncomingOffers(prev => {
+             // Avoid duplicate prompts
+             if (prev.find(o => o.id === offerInfo.fileId)) return prev;
+             return [...prev, {
+               id: offerInfo.fileId,
+               senderId: offerInfo.senderId,
+               fileName: offerInfo.name,
+               fileSize: offerInfo.size,
+               accept: acceptCallback,
+               reject: rejectCallback
+             }];
+           });
+        },
+        importReceivedFileToNetworkShare
+      );
+      setWebrtc(handler);
+
+      return () => {
+        clearInterval(interval);
+        handler.disconnect();
+      };
     }
-  }, [user, selectedGroup, view]);
+  }, [user]); // user is enough dependency here since we just want it once on login
+
 
   /** ======================
-   *  BREADCRUMBS
-   ======================== */
-  useEffect(() => {
-    const crumbs = ["Home"];
-
-    if (view === "dashboard") crumbs.push("Dashboard");
-    else if (view === "groups") crumbs.push("Groups");
-    else if (view === "files" && selectedGroup) {
-      if (selectedGroup.name === "__NETWORK_SHARE__" || selectedGroup.inviteCode === "NETWORK") {
-        crumbs.push("Network Share");
-      } else {
-        crumbs.push("Groups", selectedGroup.name);
-      }
-    }
-    else if (view === "peers") crumbs.push("Network", "Peers");
-    else if (view === "profile") crumbs.push("Profile");
-
-    setBreadcrumbs(crumbs);
-  }, [view, selectedGroup]);
-
-  /** ======================
-   *  HELPERS
+   *  NOTIFICATIONS
    ======================== */
   const notify = (msg, type = "success") => {
     setNotification({ msg, type });
     setTimeout(() => setNotification(null), 4000);
   };
 
+  /** ======================
+   *  API FETCHERS
+   ======================== */
   const fetchUser = async () => {
-  try {
-    const res = await API.get("/auth/me");
-    setUser(res.data);
-    setEditUsername(res.data.username);
-    setEditEmail(res.data.email);
-    setSettingsTheme(res.data.theme || "light");
-    setEmailNotifications(res.data.emailNotifications !== false);
-    
-    // Auto-join network group
-    await API.post("/groups/join-network").catch(err => 
-      console.log("Network group join:", err.response?.data)
-    );
-    
-    // Fetch all data to populate UI
-    await fetchGroups();
-    await fetchPeers();
-    await fetchStats();
-  } catch (err) {
-    console.error("Fetch user error:", err);
-    if (err.response?.status === 401 || err.response?.status === 403) {
-      logout();
+    try {
+      const res = await API.get("/auth/me");
+      setUser(res.data);
+      if (res.data.theme) setTheme(res.data.theme);
+
+      // Ensure user is part of the automatic Network Share group
+      await API.post("/groups/join-network").catch(() => {});
+      
+      const pRes = await API.get("/peers");
+      setPeers(pRes.data);
+
+      const gRes = await API.get("/groups");
+      setGroups(gRes.data);
+      await fetchStats();
+    } catch (err) {
+      if (err.response?.status === 401 || err.response?.status === 403) logout();
     }
-  }
-};
+  };
 
   const fetchGroups = async () => {
     try {
       const res = await API.get("/groups");
       setGroups(res.data);
-      console.log('Groups fetched:', res.data.length);
-    } catch (err) {
-      console.error('Fetch groups error:', err.response?.data || err.message);
-    }
+    } catch (err) {}
   };
 
-  const fetchFiles = async (groupId) => {
+  const createGroup = async (e) => {
+    e.preventDefault();
+    setLoading(true);
     try {
-      const res = await API.get(`/files/group/${groupId}`);
-      setFiles(res.data);
-      console.log('Files fetched for group:', groupId, res.data.length);
+      await API.post("/groups/create", { name: groupName, description: groupDesc, isPrivate: groupPrivacy });
+      setGroupName(""); setGroupDesc(""); setGroupPrivacy(true);
+      notify("Group created!");
+      fetchGroups();
     } catch (err) {
-      console.error('Fetch files error:', err.response?.data || err.message);
+      notify(err.response?.data?.error || "Error", "error");
     }
+    setLoading(false);
   };
 
-  const fetchPeers = async () => {
+  const joinGroup = async (e) => {
+    e.preventDefault();
+    setLoading(true);
     try {
-      const res = await API.get("/peers");
-      // Add mock connected peers
-      const mockPeers = [
-        {
-          _id: 'mock-peer-1',
-          name: "Shaurya Panwar's Laptop",
-          peerId: "shaurya-laptop",
-          ip: '192.168.1.105',
-          port: 5000,
-          lastSeen: new Date(),
-          isOnline: true
-        },
-        {
-          _id: 'mock-peer-2',
-          name: "Saurabh Joshi's Laptop",
-          peerId: "saurabh-laptop",
-          ip: '192.168.1.108',
-          port: 5000,
-          lastSeen: new Date(),
-          isOnline: true
-        }
-      ];
-      setPeers([...res.data, ...mockPeers]);
-      console.log('Peers fetched:', res.data.length + mockPeers.length);
+      await API.post("/groups/join", { inviteCode });
+      setInviteCode("");
+      notify("Joined group!");
+      fetchGroups();
     } catch (err) {
-      console.error('Fetch peers error:', err.response?.data || err.message);
+      notify(err.response?.data?.error || "Error", "error");
     }
+    setLoading(false);
   };
 
-  const fetchStats = async () => {
+  const deleteGroup = async (id, name) => {
+    if (!window.confirm(`Delete group ${name}?`)) return;
+    setLoading(true);
     try {
-      const res = await API.get("/stats/dashboard");
-      setStats(res.data);
-      console.log('Stats fetched:', res.data);
+      await API.delete(`/groups/${id}`);
+      notify("Group deleted");
+      fetchGroups();
+      if (selectedGroup?.id === id || selectedGroup?._id === id) {
+          setView("groups");
+          setSelectedGroup(null);
+      }
     } catch (err) {
-      console.error('Fetch stats error:', err.response?.data || err.message);
+      notify("Delete failed", "error");
     }
+    setLoading(false);
+  };
+
+  const leaveGroup = async (id, name) => {
+    if (!window.confirm(`Leave group ${name}?`)) return;
+    setLoading(true);
+    try {
+      await API.post(`/groups/${id}/leave`);
+      notify("Left group");
+      fetchGroups();
+      if (selectedGroup?.id === id || selectedGroup?._id === id) {
+          setView("groups");
+          setSelectedGroup(null);
+      }
+    } catch (err) {
+      notify("Leave failed", "error");
+    }
+    setLoading(false);
   };
 
   /** ======================
-   *  AUTH HANDLING
+   *  AUTH COMMANDS
    ======================== */
   const handleAuth = async (e) => {
     e.preventDefault();
@@ -248,6 +358,14 @@ function AppContent() {
     setLoading(false);
   };
 
+  const handleThemeToggle = () => {
+    const newTheme = isDark ? 'light' : 'dark';
+    toggleTheme();
+    if (user) {
+      API.patch("/auth/settings", { theme: newTheme }).catch(() => {});
+    }
+  };
+
   const logout = () => {
     setToken("");
     setUser(null);
@@ -257,875 +375,246 @@ function AppContent() {
   };
 
   /** ======================
-   *  PROFILE UPDATE
+   *  PEER LOGIC
    ======================== */
-  const updateProfile = async (e) => {
-    e.preventDefault();
-    setLoading(true);
-
-    try {
-      await API.patch("/auth/preferences", {
-        username: editUsername,
-        email: editEmail,
-      });
-
-      await fetchUser();
-      notify("Profile updated!");
-      setEditProfile(false);
-    } catch (err) {
-      notify("Update failed", "error");
-    }
-    setLoading(false);
-  };
-
-  const updateSettings = async (e) => {
-    e.preventDefault();
-    setLoading(true);
-
-    try {
-      await API.patch("/auth/settings", {
-        theme: settingsTheme,
-        emailNotifications: emailNotifications,
-      });
-
-      await fetchUser();
-      notify("Settings updated!");
-      setShowSettings(false);
-    } catch (err) {
-      notify("Failed to update settings", "error");
-    }
-    setLoading(false);
-  };
-
   const connectToPeer = async (peerId, peerName) => {
     setLoading(true);
     try {
-      const res = await API.post("/peers/connect", { peerId });
-      notify(`Connected to ${peerName}!`);
-      console.log("Peer connection:", res.data);
-      // Refresh peers after connection
-      fetchPeers();
+      if (webrtc) {
+        const targetWrtpPeer = webrtcPeers.find(p => p.peerId === peerId || p.socketId === peerId || p.peerName === peerName);
+        if (targetWrtpPeer) {
+          await webrtc.connectToPeer(targetWrtpPeer.socketId);
+          notify(`Connected WebRTC Data channel to ${peerName}!`);
+        } else {
+           notify("Peer not found in active WebRTC signaling.", "error");
+        }
+      } else {
+          notify("WebRTC not initialized.", "error");
+      }
     } catch (err) {
-      console.error("Peer connect error:", err);
-      notify(err.response?.data?.error || "Failed to connect to peer", "error");
+      console.error(err);
+      notify("Failed to connect via WebRTC", "error");
+    }
+    setLoading(false);
+  };
+
+  const connectAndSendFile = async (peerId, peerName, file) => {
+    setLoading(true);
+    try {
+      if (webrtc) {
+        const targetWrtpPeer = webrtcPeers.find(p => p.peerId === peerId || p.socketId === peerId || p.peerName === peerName);
+        if (targetWrtpPeer) {
+          notify(`Connecting to ${peerName} to send file...`);
+          await webrtc.connectToPeer(targetWrtpPeer.socketId);
+          webrtc.sendFile(targetWrtpPeer.socketId, file);
+          setView("transfers");
+        } else {
+          notify("Peer not found in active WebRTC signaling.", "error");
+        }
+      } else {
+        notify("WebRTC not initialized.", "error");
+      }
+    } catch (err) {
+      console.error(err);
+      notify("Failed to initiate transfer", "error");
     }
     setLoading(false);
   };
 
   /** ======================
-   *  GROUPS
+   *  TRANSFERS & FILES LOGIC
    ======================== */
-  const createGroup = async (e) => {
-    e.preventDefault();
-    setLoading(true);
-    try {
-      const res = await API.post("/groups/create", {
-        name: groupName,
-        description: groupDesc,
-        isPrivate: groupPrivacy,
-      });
-      // server returns the created group object directly
-      notify(`Group Created! Code: ${res.data.inviteCode}`);
-      setGroupName("");
-      setGroupDesc("");
-      setGroupPrivacy(true);
-      // Fetch groups and stats to update UI immediately
-      await fetchGroups();
-      await fetchStats();
-    } catch (err) {
-      console.error("Create group error:", err);
-      notify(err.response?.data?.error || "Failed to create group", "error");
-    }
-    setLoading(false);
-  };
-
-  const joinGroup = async (e) => {
-    e.preventDefault();
-    setLoading(true);
-    try {
-      await API.post("/groups/join", { inviteCode });
-      notify("Joined group!");
-      setInviteCode("");
-      // Fetch groups and stats to update UI immediately
-      await fetchGroups();
-      await fetchStats();
-    } catch (err) {
-      console.error("Join group error:", err);
-      notify(err.response?.data?.error || "Invalid invite code", "error");
-    }
-    setLoading(false);
-  };
-
-  const selectGroup = (group) => {
-    setSelectedGroup(group);
-    setView("files");
-    fetchFiles(group.id);
-  };
-
-  const updateGroup = async (e) => {
-    e.preventDefault();
-    setLoading(true);
-    try {
-      await API.patch(`/groups/${editingGroup.id}`, {
-        name: editGroupName,
-        description: editGroupDesc,
-        isPrivate: editGroupPrivacy,
-      });
-      notify("Group updated!");
-      setEditingGroup(null);
-      await fetchGroups();
-      await fetchStats();
-    } catch (err) {
-      notify(err.response?.data?.error || "Failed to update group", "error");
-    }
-    setLoading(false);
-  };
-
-  const deleteGroup = async (groupId, groupName) => {
-    if (!window.confirm(`Delete group "${groupName}"? All files will be permanently deleted.`)) {
-      return;
-    }
-    
-    setLoading(true);
-    try {
-      await API.delete(`/groups/${groupId}`);
-      notify("Group deleted");
-      if (selectedGroup?.id === groupId) {
-        setSelectedGroup(null);
-        setView("groups");
-      }
-      await fetchGroups();
-      await fetchStats();
-    } catch (err) {
-      notify(err.response?.data?.error || "Failed to delete group", "error");
-    }
-    setLoading(false);
-  };
-
-  const startEditGroup = (group) => {
-    setEditingGroup(group);
-    setEditGroupName(group.name);
-    setEditGroupDesc(group.description || "");
-    setEditGroupPrivacy(group.isPrivate !== false);
-  };
-
-  const leaveGroup = async (groupId, groupName) => {
-    if (!window.confirm(`Leave group "${groupName}"? You will lose access to all files in this group.`)) {
-      return;
-    }
-    
-    setLoading(true);
-    try {
-      const response = await API.post(`/groups/${groupId}/leave`);
-      console.log('Leave group response:', response.data);
-      notify("Left group successfully");
-      if (selectedGroup?.id === groupId) {
-        setSelectedGroup(null);
-        setView("groups");
-      }
-      await fetchGroups();
-      await fetchStats();
-    } catch (err) {
-      console.error('Leave group error:', err);
-      console.error('Error response:', err.response?.data);
-      notify(err.response?.data?.error || "Failed to leave group", "error");
-    }
-    setLoading(false);
-  };
-
-  /** ======================
-   *  FILE HANDLING
-   ======================== */
-  const uploadFileToGroup = async (e) => {
-    e.preventDefault();
-    if (!uploadFile) return notify("Select a file", "error");
-
-    setLoading(true);
-    const formData = new FormData();
-    formData.append("file", uploadFile);
-    formData.append("groupId", selectedGroup.id);
-    formData.append("tags", JSON.stringify(tags.split(",").map((t) => t.trim())));
-
-    try {
-      await API.post("/files/upload", formData);
-      notify("File uploaded!");
-      setUploadFile(null);
-      setTags("");
-      await fetchFiles(selectedGroup.id);
-      await fetchStats();
-    } catch (err) {
-      notify("Upload failed", "error");
-    }
-    setLoading(false);
-  };
-
-  const downloadFile = async (id, name) => {
-    try {
-      const res = await API.get(`/files/download/${id}`, { responseType: "blob" });
-      const url = window.URL.createObjectURL(new Blob([res.data]));
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = name;
-      link.click();
-      notify("Downloaded!");
-    } catch (err) {
-      notify("Download failed", "error");
-    }
-  };
-
   const deleteFile = async (id) => {
-    if (!window.confirm("Delete this file?")) return;
-
-    try {
-      await API.delete(`/files/${id}`);
-      notify("File deleted");
-      await fetchFiles(selectedGroup.id);
-      await fetchStats();
-    } catch {
-      notify("Delete failed", "error");
-    }
+    if (!window.confirm("Delete this local file record?")) return;
+    setFiles(curr => curr.filter(f => f.id !== id));
+    notify("Local file record deleted");
   };
 
   /** ======================
-   *  FORMAT HELPERS
+   *  FORMATTERS
    ======================== */
   const formatSize = (bytes) => {
-    if (bytes === null || bytes === undefined || bytes === 0) return "0 MB";
+    if (!bytes) return "0 MB";
     const mb = bytes / (1024 * 1024);
-    const gb = bytes / (1024 * 1024 * 1024);
-    
-    if (gb >= 1) {
-      return `${gb.toFixed(2)} GB`;
-    } else if (mb >= 1) {
-      return `${mb.toFixed(2)} MB`;
-    } else if (bytes >= 1024) {
-      return `${(bytes / 1024).toFixed(2)} KB`;
-    }
-    return `${bytes} B`;
+    if (mb >= 1024) return `${(mb / 1024).toFixed(2)} GB`;
+    if (mb >= 1) return `${mb.toFixed(2)} MB`;
+    return `${(bytes / 1024).toFixed(2)} KB`;
   };
   
   const formatDate = (d) => new Date(d).toLocaleString();
 
+
   /** ======================
-   *  AUTH SCREEN
+   *  RENDER APP
    ======================== */
   if (!token || !user) {
     return (
-      <div className="auth-container">
-        <div className="auth-card">
-          <h1>🌐 PeerX</h1>
-
-          <div className="auth-switch">
-            <button className={isLogin ? "active" : ""} onClick={() => setIsLogin(true)}>
-              Login
-            </button>
-            <button className={!isLogin ? "active" : ""} onClick={() => setIsLogin(false)}>
-              Register
-            </button>
-          </div>
-
-          <form onSubmit={handleAuth}>
-            {!isLogin && (
-              <input
-                type="text"
-                placeholder="Username"
-                value={regUsername}
-                onChange={(e) => setRegUsername(e.target.value)}
-                required
-              />
-            )}
-
-            <input
-              type="email"
-              placeholder="Email"
-              value={isLogin ? loginEmail : regEmail}
-              onChange={(e) => (isLogin ? setLoginEmail(e.target.value) : setRegEmail(e.target.value))}
-              required
-            />
-
-            <input
-              type="password"
-              placeholder="Password"
-              value={isLogin ? loginPassword : regPassword}
-              onChange={(e) =>
-                isLogin ? setLoginPassword(e.target.value) : setRegPassword(e.target.value)
-              }
-              required
-            />
-
-            <button type="submit" disabled={loading}>
-              {loading ? "Processing..." : isLogin ? "Login" : "Create Account"}
-            </button>
-          </form>
-        </div>
-
-        {notification && <div className={`notification ${notification.type}`}>{notification.msg}</div>}
-      </div>
+      <AuthPage 
+        isLogin={isLogin} setIsLogin={setIsLogin}
+        loginEmail={loginEmail} setLoginEmail={setLoginEmail}
+        loginPassword={loginPassword} setLoginPassword={setLoginPassword}
+        regUsername={regUsername} setRegUsername={setRegUsername}
+        regEmail={regEmail} setRegEmail={setRegEmail}
+        regPassword={regPassword} setRegPassword={setRegPassword}
+        handleAuth={handleAuth} loading={loading}
+        notification={notification}
+      />
     );
   }
 
-  /** ======================
-   *  MAIN APP UI
-   ======================== */
   return (
-    <div className="app-wrapper">
-      <Navbar
-        user={user}
-        isDark={isDark}
-        toggleTheme={toggleTheme}
-        toggleSidebar={() => setSidebarOpen(!sidebarOpen)}
-        onLogout={logout}
-        onProfileClick={() => setView("profile")}
-        onSettingsClick={() => setShowSettings(true)}
-      />
+    <Layout
+      user={user}
+      isDark={isDark}
+      toggleTheme={handleThemeToggle}
+      onLogout={logout}
+      onProfileClick={() => setView("profile")}
+      onSettingsClick={() => setView("settings")}
+      sidebarOpen={sidebarOpen}
+      setSidebarOpen={setSidebarOpen}
+      view={view}
+      setView={setView}
+      groups={groups}
+      peers={webrtcPeers.length > 0 ? webrtcPeers : peers}
+      selectedGroup={selectedGroup}
+      selectGroup={(g) => { setSelectedGroup(g); setView("file_manager"); }}
+      activeTransfers={activeTransfers.length}
+    >
 
-      <div className="app-body">
-        {/* SIDEBAR */}
-        <aside className={`sidebar ${sidebarOpen ? "open" : ""}`}>
-          <div className="sidebar-title">NAVIGATION</div>
-
-          <button className={view === "dashboard" ? "active" : ""} onClick={() => setView("dashboard")}>
-            <span>📊 Dashboard</span>
-          </button>
-
-          <button className={view === "groups" ? "active" : ""} onClick={() => setView("groups")}>
-            <span>👥 Groups</span>
-            <span className="count-badge">{groups.length}</span>
-          </button>
-
-          <button className={view === "peers" ? "active" : ""} onClick={() => setView("peers")}>
-            <span>💻 Peers</span>
-            <span className="count-badge">{peers.length}</span>
-          </button>
-
-          <div className="sidebar-title" style={{ marginTop: 20 }}>
-            NETWORK SHARING
-          </div>
-
-          <button 
-            className={selectedGroup?.name === "__NETWORK_SHARE__" && view === "files" ? "active network-share-btn" : "network-share-btn"}
-            onClick={() => {
-              const networkGroup = groups.find(g => g.name === "__NETWORK_SHARE__" || g.inviteCode === "NETWORK");
-              if (networkGroup) {
-                selectGroup(networkGroup);
-              } else {
-                notify("Network Share not available. Please wait...", "info");
-                fetchGroups();
-              }
-            }}
-          >
-            <span>🌐 Network Share</span>
-            <span className="count-badge">{peers.length}</span>
-          </button>
-
-          {selectedGroup && selectedGroup.name !== "__NETWORK_SHARE__" && (
-            <>
-              <div className="sidebar-title" style={{ marginTop: 20 }}>
-                CURRENT GROUP
-              </div>
-
-              <button className={view === "files" ? "active" : ""} onClick={() => setView("files")}>
-                <span>📁 {selectedGroup.name}</span>
-              </button>
-            </>
-          )}
-        </aside>
-
-        <div 
-          className={`sidebar-overlay ${sidebarOpen ? "active" : ""}`}
-          onClick={() => setSidebarOpen(false)}
+      {view === "dashboard" && (
+        <DashboardPage 
+          user={user}
+          stats={stats} 
+          peers={webrtcPeers.length > 0 ? webrtcPeers : peers}
+          groups={groups}
+          files={files}
+          activeTransfers={activeTransfers}
+          setView={setView}
+          selectGroup={(g) => { setSelectedGroup(g); setView("file_manager"); }}
+          fetchStats={fetchStats}
+          formatSize={formatSize}
+          connectToPeer={connectToPeer}
         />
+      )}
 
-        {/* MAIN CONTENT */}
-        <main className="main-content">
-          {/* BREADCRUMBS */}
-          <div className="breadcrumbs">
-            {breadcrumbs.map((c, i) => {
-              const last = i === breadcrumbs.length - 1;
-              return (
-                <span key={i}>
-                  {last ? (
-                    <span className="breadcrumb-current">{c}</span>
-                  ) : (
-                    <button
-                      className="breadcrumb-link"
-                      onClick={() => {
-                        if (c === "Home" || c === "Dashboard") setView("dashboard");
-                        if (c === "Groups") setView("groups");
-                        if (c === "Network") setView("peers");
-                        if (c === "Profile") setView("profile");
-                      }}
-                    >
-                      {c}
-                    </button>
-                  )}
-                  {i < breadcrumbs.length - 1 && " / "}
-                </span>
-              );
-            })}
-          </div>
+      {view === "files" && (
+        <FilesPage
+          files={files}
+          deleteFile={deleteFile}
+          formatSize={formatSize}
+          formatDate={formatDate}
+        />
+      )}
 
-          {/* DASHBOARD */}
-          {view === "dashboard" && (
-            <>
-              <h1 className="page-title">Dashboard</h1>
-              <p className="muted">Real-time overview of your usage • Updates every 5 seconds</p>
+      {view === "peers" && (
+        <PeersPage
+          peers={webrtcPeers.length > 0 ? webrtcPeers : peers} // prefer webrtc signalling server peers
+          connectToPeer={connectToPeer}
+          onSendFile={connectAndSendFile}
+          loading={loading}
+        />
+      )}
 
-              {/* STATS GRID */}
-              <div className="stats-grid">
-                <div className="stat-box">
-                  <h3>Groups</h3>
-                  <p className="stat-number">{stats.groupCount || 0}</p>
-                  <small className="stat-label">Active groups you're in</small>
-                </div>
-                <div className="stat-box">
-                  <h3>Files</h3>
-                  <p className="stat-number">{stats.fileCount || 0}</p>
-                  <small className="stat-label">Files you've uploaded</small>
-                </div>
-                <div className="stat-box">
-                  <h3>Peers Online</h3>
-                  <p className="stat-number">{stats.peersOnline || 0}</p>
-                  <small className="stat-label">Devices on your network</small>
-                </div>
+      {view === "groups" && (
+        <GroupsPage
+          groups={groups}
+          groupName={groupName}
+          setGroupName={setGroupName}
+          groupDesc={groupDesc}
+          setGroupDesc={setGroupDesc}
+          groupPrivacy={groupPrivacy}
+          setGroupPrivacy={setGroupPrivacy}
+          inviteCode={inviteCode}
+          setInviteCode={setInviteCode}
+          createGroup={createGroup}
+          joinGroup={joinGroup}
+          deleteGroup={deleteGroup}
+          leaveGroup={leaveGroup}
+          selectGroup={(g) => { setSelectedGroup(g); setView("file_manager"); }}
+          loading={loading}
+        />
+      )}
+
+      {view === "file_manager" && selectedGroup && (
+        <FileManager
+          group={selectedGroup}
+          user={user}
+          onBack={() => setView("groups")}
+          webrtcPeers={webrtcPeers}
+          webrtc={webrtc}
+          API={API}
+          BASE_API={BASE_API}
+          notify={notify}
+        />
+      )}
+      
+      {view === "upload" && (
+          <UploadPage 
+            peers={webrtcPeers}
+            webrtc={webrtc}
+            notify={notify}
+            setView={setView}
+          />
+      )}
+
+      {view === "transfers" && (
+          <TransfersPage activeTransfers={activeTransfers} />
+      )}
+
+      {view === "chat" && (
+        <ChatPage
+          groups={groups}
+          selectGroup={(g) => { setSelectedGroup(g); setView("file_manager"); }}
+          setView={setView}
+        />
+      )}
+
+      {view === "profile" && (
+        <ProfilePage
+          user={user}
+          stats={stats}
+          formatSize={formatSize}
+          toggleTheme={handleThemeToggle}
+          isDark={isDark}
+          onLogout={logout}
+        />
+      )}
+
+      {/* Incoming File Offers */}
+      <div className="incoming-offers-container" style={{ position: 'fixed', bottom: '20px', right: '20px', zIndex: 9999, display: 'flex', flexDirection: 'column', gap: '10px' }}>
+        {incomingOffers.map(offer => {
+            const senderName = webrtcPeers.find(p => p.socketId === offer.senderId)?.peerName || offer.senderId;
+            const sizeMB = (offer.fileSize / (1024 * 1024)).toFixed(2);
+            return (
+              <div key={offer.id} className="offer-toast card fade-in" style={{ padding: '15px', borderLeft: '4px solid var(--primary-color)', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}>
+                 <h4 style={{ margin: '0 0 5px 0' }}>Incoming File Transfer</h4>
+                 <p style={{ margin: '0 0 5px 0' }}><strong>{senderName}</strong> wants to send you:</p>
+                 <p className="offer-filename" style={{ margin: '0 0 10px 0', wordBreak: 'break-all' }}>{offer.fileName} <span className="muted">({sizeMB} MB)</span></p>
+                 <div className="offer-actions" style={{ display: 'flex', gap: '10px' }}>
+                    <button className="btn-primary" onClick={() => { offer.accept(); setIncomingOffers(prev => prev.filter(o => o.id !== offer.id)); }}>Accept</button>
+                    <button className="btn-secondary" onClick={() => { offer.reject(); setIncomingOffers(prev => prev.filter(o => o.id !== offer.id)); }}>Decline</button>
+                 </div>
               </div>
-
-              {/* QUICK ACTIONS */}
-              <div className="card" style={{ marginTop: "24px" }}>
-                <h3>⚡ Quick Actions</h3>
-                <div className="quick-actions">
-                  <button 
-                    className="quick-action-btn"
-                    onClick={() => setView("groups")}
-                  >
-                    <span className="action-icon">➕</span>
-                    <div>
-                      <strong>Create Group</strong>
-                      <small>Start sharing files</small>
-                    </div>
-                  </button>
-                  <button 
-                    className="quick-action-btn"
-                    onClick={() => setView("peers")}
-                  >
-                    <span className="action-icon">🌐</span>
-                    <div>
-                      <strong>View Peers</strong>
-                      <small>{peers.length} device{peers.length !== 1 ? 's' : ''} online</small>
-                    </div>
-                  </button>
-                  <button 
-                    className="quick-action-btn"
-                    onClick={() => {
-                      const networkGroup = groups.find(g => g.name === "__NETWORK_SHARE__" || g.inviteCode === "NETWORK");
-                      if (networkGroup) {
-                        selectGroup(networkGroup);
-                      } else {
-                        notify("Network group not found", "error");
-                      }
-                    }}
-                  >
-                    <span className="action-icon">📁</span>
-                    <div>
-                      <strong>Network Share</strong>
-                      <small>Share with all peers</small>
-                    </div>
-                  </button>
-                  <button 
-                    className="quick-action-btn"
-                    onClick={() => fetchStats()}
-                  >
-                    <span className="action-icon">🔄</span>
-                    <div>
-                      <strong>Refresh Stats</strong>
-                      <small>Update dashboard</small>
-                    </div>
-                  </button>
-                </div>
-              </div>
-            </>
-          )}
-
-          {/* GROUPS */}
-          {view === "groups" && (
-            <>
-              <h1 className="page-title">Groups</h1>
-              <p className="muted">Create or join a group</p>
-
-              <div className="groups-grid">
-                {/* CREATE GROUP */}
-                <div className="card">
-                  <h3>Create Group</h3>
-                  <form onSubmit={createGroup}>
-                    <input
-                      type="text"
-                      placeholder="Group Name"
-                      value={groupName}
-                      onChange={(e) => setGroupName(e.target.value)}
-                      required
-                    />
-                    <input
-                      type="text"
-                      placeholder="Description"
-                      value={groupDesc}
-                      onChange={(e) => setGroupDesc(e.target.value)}
-                    />
-                    <div className="privacy-toggle">
-                      <label>
-                        <input
-                          type="checkbox"
-                          checked={groupPrivacy}
-                          onChange={(e) => setGroupPrivacy(e.target.checked)}
-                        />
-                        <span>🔒 Private Group</span>
-                      </label>
-                      <small className="muted">
-                        {groupPrivacy ? "Only invited members can join" : "Anyone with code can join"}
-                      </small>
-                    </div>
-                    <button type="submit" disabled={loading}>Create</button>
-                  </form>
-                </div>
-
-                {/* NETWORK SHARE BANNER */}
-                <div className="card" style={{ 
-                  background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
-                  color: "white",
-                  marginBottom: "24px",
-                  border: "none"
-                }}>
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                    <div>
-                      <h3 style={{ color: "white", marginBottom: "8px" }}>
-                        🌐 Network Share
-                      </h3>
-                      <p style={{ opacity: 0.9, fontSize: "14px", margin: 0 }}>
-                        Share files instantly with all {peers.length} device{peers.length !== 1 ? 's' : ''} on your network
-                      </p>
-                    </div>
-                    <button
-                      onClick={() => {
-                        const networkGroup = groups.find(g => g.name === "__NETWORK_SHARE__" || g.inviteCode === "NETWORK");
-                        if (networkGroup) {
-                          selectGroup(networkGroup);
-                        } else {
-                          notify("Network group not found. Refreshing...", "info");
-                          fetchGroups();
-                        }
-                      }}
-                      style={{
-                        background: "rgba(255,255,255,0.2)",
-                        border: "2px solid white",
-                        color: "white",
-                        padding: "12px 24px",
-                        borderRadius: "8px",
-                        cursor: "pointer",
-                        fontWeight: "600",
-                        transition: "all 0.3s"
-                      }}
-                      onMouseOver={(e) => e.target.style.background = "rgba(255,255,255,0.3)"}
-                      onMouseOut={(e) => e.target.style.background = "rgba(255,255,255,0.2)"}
-                    >
-                      Open Network Share →
-                    </button>
-                  </div>
-                </div>
-
-                {/* JOIN GROUP */}
-                <div className="card">
-                  <h3>Join Group</h3>
-                  <form onSubmit={joinGroup}>
-                    <input
-                      type="text"
-                      placeholder="Invite Code"
-                      value={inviteCode}
-                      onChange={(e) => setInviteCode(e.target.value.toUpperCase())}
-                      required
-                      maxLength={8}
-                    />
-                    <button type="submit" disabled={loading}>Join</button>
-                  </form>
-                </div>
-              </div>
-
-              {/* GROUP LIST */}
-              <div className="groups-list">
-                <h3>Your Private Groups</h3>
-                {groups.filter(g => g.name !== "__NETWORK_SHARE__" && g.inviteCode !== "NETWORK").length === 0 ? (
-                  <p className="empty">No groups yet.</p>
-                ) : (
-                  groups
-                    .filter(g => g.name !== "__NETWORK_SHARE__" && g.inviteCode !== "NETWORK")
-                    .map((g) => (
-                      <div key={g.id} className="group-item">
-                        <div className="group-item-content">
-                          <div className="group-item-header">
-                            <strong>{g.name}</strong>
-                            <span className={`privacy-badge ${g.isPrivate ? 'private' : 'public'}`}>
-                              {g.isPrivate ? '🔒 Private' : '🌐 Public'}
-                            </span>
-                          </div>
-                          <div className="small">{g.description || "No description"}</div>
-                          <div className="group-meta">
-                            <span>Invite Code: <code>{g.inviteCode}</code></span>
-                            <span>• {g.memberCount} member{g.memberCount !== 1 ? 's' : ''}</span>
-                            {g.isCreator && <span className="creator-badge">• 👑 Admin</span>}
-                            {!g.isCreator && g.role && <span className="member-badge">• 👤 {g.role}</span>}
-                          </div>
-                        </div>
-                        <div className="group-item-actions">
-                          <button onClick={() => selectGroup(g)} className="btn-primary">Open →</button>
-                          {g.isCreator ? (
-                            <>
-                              <button onClick={() => startEditGroup(g)} className="btn-secondary">✏️ Edit</button>
-                              <button onClick={() => deleteGroup(g.id, g.name)} className="btn-danger">🗑️ Delete</button>
-                            </>
-                          ) : (
-                            <button onClick={() => leaveGroup(g.id, g.name)} className="btn-warning">🚪 Leave</button>
-                          )}
-                        </div>
-                      </div>
-                    ))
-                )}
-              </div>
-
-              {/* EDIT GROUP MODAL */}
-              {editingGroup && (
-                <div className="modal-overlay" onClick={() => setEditingGroup(null)}>
-                  <div className="modal-content" onClick={(e) => e.stopPropagation()}>
-                    <h3>✏️ Edit Group</h3>
-                    <form onSubmit={updateGroup}>
-                      <input
-                        type="text"
-                        placeholder="Group Name"
-                        value={editGroupName}
-                        onChange={(e) => setEditGroupName(e.target.value)}
-                        required
-                      />
-                      <textarea
-                        placeholder="Description"
-                        value={editGroupDesc}
-                        onChange={(e) => setEditGroupDesc(e.target.value)}
-                        rows={3}
-                      />
-                      <div className="privacy-toggle">
-                        <label>
-                          <input
-                            type="checkbox"
-                            checked={editGroupPrivacy}
-                            onChange={(e) => setEditGroupPrivacy(e.target.checked)}
-                          />
-                          <span>🔒 Private Group</span>
-                        </label>
-                        <small className="muted">
-                          {editGroupPrivacy ? "Only invited members can join" : "Anyone with code can join"}
-                        </small>
-                      </div>
-                      <div className="modal-actions">
-                        <button type="submit" disabled={loading} className="btn-primary">
-                          Save Changes
-                        </button>
-                        <button type="button" onClick={() => setEditingGroup(null)} className="btn-secondary">
-                          Cancel
-                        </button>
-                      </div>
-                    </form>
-                  </div>
-                </div>
-              )}
-            </>
-          )}
-
-          {/* FILES - Enhanced with FileManager Component */}
-          {view === "files" && selectedGroup && (
-            <FileManager
-              group={selectedGroup}
-              user={user}
-              API={API}
-              BASE_API={BASE_API}
-              onBack={() => setView("groups")}
-              notify={notify}
-            />
-          )}
-
-          {/* PEERS */}
-          {view === "peers" && (
-            <>
-              <h1 className="page-title">Network Peers</h1>
-              <p className="muted">Discover and connect with devices on your local network</p>
-
-              <button onClick={fetchPeers} className="refresh-btn">🔄 Refresh Peers</button>
-
-              {/* PEER CONNECTION STATUS */}
-              <div className="card" style={{ marginTop: "20px", background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)", color: "white", border: "none" }}>
-                <h3 style={{ color: "white" }}>🌐 Peer Discovery Active</h3>
-                <p style={{ opacity: 0.9, marginTop: "8px" }}>
-                  {peers.length} device{peers.length !== 1 ? 's' : ''} found on your network
-                </p>
-              </div>
-
-              {/* CONNECTION INSTRUCTIONS */}
-              <div className="card" style={{ marginTop: "20px" }}>
-                <h3>📡 How to Connect Devices</h3>
-                <ol style={{ marginLeft: "20px", marginTop: "12px", lineHeight: "1.8" }}>
-                  <li>Ensure all devices are on the <strong>same WiFi network</strong></li>
-                  <li>Run backend & frontend on each device</li>
-                  <li>Wait 5–10 seconds for automatic peer discovery</li>
-                  <li>Click "Connect" to establish direct connection</li>
-                  <li>Share files through Network Share group or invite to private groups</li>
-                </ol>
-              </div>
-
-              <h3 style={{ marginTop: "24px" }}>Available Peers</h3>
-              <div className="peers-grid">
-                {peers.length === 0 ? (
-                  <div className="card">
-                    <p className="empty">No peers detected. Make sure other devices are running PersonalSpace.</p>
-                  </div>
-                ) : (
-                  peers.map((p, i) => (
-                    <div key={i} className="peer-card card">
-                      <div className="peer-header">
-                        <div className="peer-name">💻 {p.name}</div>
-                        <span className="peer-status online">● Online</span>
-                      </div>
-                      <div className="peer-ip">
-                        📍 {p.ip}:{p.port}
-                      </div>
-                      <div className="peer-meta">
-                        Last seen: {formatDate(p.lastSeen)}
-                      </div>
-                      <div className="peer-actions">
-                        <button 
-                          className="btn-primary" 
-                          onClick={() => connectToPeer(p.id || `${p.ip}:${p.port}`, p.name)}
-                        >
-                          🔗 Connect
-                        </button>
-                        <button 
-                          className="btn-secondary" 
-                          onClick={() => window.open(`http://${p.ip}:${p.port}`, "_blank")}
-                        >
-                          🌐 Open
-                        </button>
-                      </div>
-                    </div>
-                  ))
-                )}
-              </div>
-            </>
-          )}
-
-          {/* PROFILE */}
-          {view === "profile" && (
-            <>
-              <h1 className="page-title">Profile</h1>
-
-              <div className="card" style={{ maxWidth: 500 }}>
-                {!editProfile ? (
-                  <>
-                    <div><strong>Username:</strong> {user.username}</div>
-                    <div><strong>Email:</strong> {user.email}</div>
-
-                    <button onClick={() => setEditProfile(true)}>Edit</button>
-                  </>
-                ) : (
-                  <form onSubmit={updateProfile}>
-                    <input
-                      type="text"
-                      value={editUsername}
-                      onChange={(e) => setEditUsername(e.target.value)}
-                      required
-                    />
-
-                    <input
-                      type="email"
-                      value={editEmail}
-                      onChange={(e) => setEditEmail(e.target.value)}
-                      required
-                    />
-
-                    <div className="row">
-                      <button type="submit" disabled={loading}>
-                        Save
-                      </button>
-                      <button type="button" onClick={() => setEditProfile(false)}>
-                        Cancel
-                      </button>
-                    </div>
-                  </form>
-                )}
-              </div>
-            </>
-          )}
-        </main>
+            );
+        })}
       </div>
 
-      <Footer />
-      <CookieBanner user={user} />
-
-      {/* SETTINGS MODAL */}
-      {showSettings && (
-        <div className="modal-overlay" onClick={() => setShowSettings(false)}>
-          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
-            <h3>⚙️ Settings</h3>
-            <form onSubmit={updateSettings}>
-              <div className="settings-section">
-                <h4>Appearance</h4>
-                <div className="setting-item">
-                  <label>
-                    <span>Theme</span>
-                    <select 
-                      value={settingsTheme} 
-                      onChange={(e) => setSettingsTheme(e.target.value)}
-                    >
-                      <option value="light">☀️ Light</option>
-                      <option value="dark">🌙 Dark</option>
-                    </select>
-                  </label>
-                </div>
-              </div>
-
-              <div className="settings-section">
-                <h4>Notifications</h4>
-                <div className="setting-item">
-                  <label className="toggle-label">
-                    <input
-                      type="checkbox"
-                      checked={emailNotifications}
-                      onChange={(e) => setEmailNotifications(e.target.checked)}
-                    />
-                    <span>📧 Email Notifications</span>
-                  </label>
-                  <small className="muted">Receive email updates about file activities</small>
-                </div>
-              </div>
-
-              <div className="modal-actions">
-                <button type="submit" disabled={loading} className="btn-primary">
-                  Save Settings
-                </button>
-                <button type="button" onClick={() => setShowSettings(false)} className="btn-secondary">
-                  Cancel
-                </button>
-              </div>
-            </form>
-          </div>
+      {/* Global Notification */}
+      {notification && (
+        <div className={`notification ${notification.type}`}>
+          {notification.msg}
         </div>
       )}
-
-      {notification && (
-        <div className={`notification ${notification.type}`}>{notification.msg}</div>
-      )}
-    </div>
+    </Layout>
   );
 }
 
-/** WRAPPER */
-export default function App() {
+function App() {
   return (
     <ThemeProvider>
       <AppContent />
     </ThemeProvider>
   );
 }
+
+export default App;

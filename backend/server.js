@@ -38,14 +38,10 @@ const ENCRYPTION_ALGORITHM = process.env.ENCRYPTION_ALGORITHM || "aes-256-gcm";
 const ENABLE_PEER_DISCOVERY = process.env.ENABLE_PEER_DISCOVERY === "true";
 const PEER_PORT = parseInt(process.env.PEER_PORT) || 5001;
 const NODE_ENV = process.env.NODE_ENV || "development";
-const UPLOADS_FOLDER = process.env.UPLOADS_FOLDER || "uploads";
-const UPLOADS_DIR = path.isAbsolute(UPLOADS_FOLDER)
-  ? UPLOADS_FOLDER
-  : path.join(__dirname, UPLOADS_FOLDER);
 
 // ====================== MIDDLEWARE ======================
 app.use(express.json());
-app.use('/uploads', express.static(UPLOADS_DIR));
+app.use('/uploads', express.static('uploads'));
 app.use('/previews', express.static('previews'));
 
 // CORS configuration
@@ -72,7 +68,7 @@ if (NODE_ENV === 'development') {
   }));
 }
 
-if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+if (!fs.existsSync('uploads')) fs.mkdirSync('uploads');
 if (!fs.existsSync('previews')) fs.mkdirSync('previews');
 
 app.use((req, res, next) => {
@@ -505,11 +501,9 @@ async function markFileForNetworkSharing(fileId, groupId) {
 }
 
 // Retrieve file from local storage (simplified - no peer-to-peer needed)
-const uploadPath = (filename = "") => path.join(UPLOADS_DIR, filename);
-
 async function retrieveFileFromLocal(file) {
     try {
-        const localFilePath = uploadPath(file.filename);
+        const localFilePath = path.join(__dirname, "uploads", file.filename);
         
         // Check if file exists locally
         if (fs.existsSync(localFilePath)) {
@@ -527,8 +521,8 @@ async function retrieveFileFromLocal(file) {
 // ====================== MULTER ======================
 const upload = multer({
     storage: multer.diskStorage({
-        destination: (_req, _file, cb) => cb(null, UPLOADS_DIR),
-        filename: (_req, file, cb) =>
+        destination: "uploads/",
+        filename: (req, file, cb) =>
             cb(null, Date.now() + "-" + crypto.randomBytes(6).toString("hex") + path.extname(file.originalname))
     }),
     limits: { fileSize: MAX_FILE_SIZE }
@@ -632,15 +626,36 @@ app.post("/api/groups/create", auth, async (req, res) => {
 
         console.log(`[Group] Creating group "${name}" for user ${req.user.userId}`);
 
+        // Generate a unique invite code (retry if collision occurs)
+        let inviteCode;
+        let attempts = 0;
+        const maxAttempts = 10;
+        
+        do {
+            inviteCode = crypto.randomBytes(3).toString("hex").toUpperCase();
+            const existing = await Group.findOne({ inviteCode });
+            if (!existing) break;
+            attempts++;
+            if (attempts >= maxAttempts) {
+                // Fallback to longer code if too many collisions
+                inviteCode = crypto.randomBytes(4).toString("hex").toUpperCase();
+                break;
+            }
+        } while (attempts < maxAttempts);
+
+        console.log(`[Group] Generated invite code: ${inviteCode}`);
+
         const group = await Group.create({
             name,
             description,
             creator: req.user.userId,
             encryptionKey,
-            inviteCode: crypto.randomBytes(3).toString("hex").toUpperCase(),
+            inviteCode: inviteCode,
             isPrivate,
             members: [{ userId: req.user.userId, role: "admin" }]
         });
+
+        console.log(`[Group] Group created: ${group._id} with invite code: ${group.inviteCode}`);
 
         const updatedUser = await User.findByIdAndUpdate(req.user.userId, {
             $addToSet: { groups: group._id }
@@ -652,7 +667,11 @@ app.post("/api/groups/create", auth, async (req, res) => {
             console.log(`[Group] User ${req.user.userId} added to group ${group._id}`);
         }
 
-        res.json(group);
+        res.json({
+            ...group.toObject(),
+            id: group._id.toString(),
+            _id: group._id
+        });
     } catch (err) {
         console.error("Create group error:", err);
         res.status(500).json({ error: "Failed to create group: " + err.message });
@@ -751,25 +770,54 @@ app.delete("/api/groups/:groupId/members/:userId", auth, async (req, res) => {
 
 app.post("/api/groups/join", auth, async (req, res) => {
   try {
-    const inviteCode = (req.body.inviteCode || "").trim().toUpperCase();
-    if (!inviteCode) return res.status(400).json({ error: "Invite code required" });
-    const group = await Group.findOne({ inviteCode });
-    if (!group) return res.status(404).json({ error: "Invalid invite code" });
+    const { inviteCode } = req.body;
+    
+    if (!inviteCode || typeof inviteCode !== 'string') {
+      return res.status(400).json({ error: "Invite code is required" });
+    }
+
+    // Clean and normalize the invite code
+    const cleanInviteCode = inviteCode.trim().toUpperCase();
+    console.log(`[Join] User ${req.user.userId} attempting to join with code: "${cleanInviteCode}"`);
+
+    // Search for group with the invite code
+    const group = await Group.findOne({ inviteCode: cleanInviteCode });
+    
+    if (!group) {
+      console.log(`[Join] Group not found for invite code: "${cleanInviteCode}"`);
+      // Also try to find all groups to help debug
+      const allGroups = await Group.find({}, 'name inviteCode').limit(10);
+      console.log(`[Join] Available groups (first 10):`, allGroups.map(g => ({ name: g.name, code: g.inviteCode })));
+      return res.status(404).json({ error: "Invalid invite code" });
+    }
+
+    console.log(`[Join] Found group: ${group.name} (${group._id})`);
 
     const isMember = group.members.some(m => m.userId.toString() === req.user.userId);
-    if (isMember) return res.status(400).json({ error: "Already a member" });
+    if (isMember) {
+      console.log(`[Join] User ${req.user.userId} is already a member of group ${group._id}`);
+      return res.status(400).json({ error: "Already a member" });
+    }
 
+    // Add user to group
     group.members.push({ userId: req.user.userId, role: "member" });
     await group.save();
+    console.log(`[Join] User ${req.user.userId} added to group ${group._id}`);
 
+    // Add group to user's groups list
     await User.findByIdAndUpdate(req.user.userId, {
-      $push: { groups: group._id }
+      $addToSet: { groups: group._id }
     }, { new: true });
+    console.log(`[Join] Group ${group._id} added to user ${req.user.userId}`);
 
-    res.json(group);
+    res.json({
+      ...group.toObject(),
+      id: group._id.toString(),
+      _id: group._id
+    });
   } catch (err) {
     console.error("Join group error:", err);
-    res.status(500).json({ error: "Failed to join group" });
+    res.status(500).json({ error: "Failed to join group: " + err.message });
   }
 });
 
@@ -859,7 +907,7 @@ app.delete("/api/groups/:id", auth, async (req, res) => {
     
     const files = await File.find({ group: req.params.id });
     for (const file of files) {
-      const filePath = uploadPath(file.filename);
+      const filePath = path.join(__dirname, "uploads", file.filename);
       if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
       
       if (file.hasPreview && file.previewPath) {
@@ -918,7 +966,7 @@ app.post("/api/groups/:id/leave", auth, async (req, res) => {
     if (group.members.length === 0) {
       const files = await File.find({ group: req.params.id });
       for (const file of files) {
-        const filePath = uploadPath(file.filename);
+        const filePath = path.join(__dirname, "uploads", file.filename);
         if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
         
         await User.findByIdAndUpdate(file.owner, {
@@ -1006,7 +1054,7 @@ app.delete("/api/folders/:id", auth, async (req, res) => {
             // Delete files in this folder
             const files = await File.find({ folder: folderId });
             for (const file of files) {
-                const filePath = uploadPath(file.filename);
+                const filePath = path.join(__dirname, "uploads", file.filename);
                 if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
                 
                 if (file.hasPreview && file.previewPath) {
@@ -1482,19 +1530,80 @@ app.get("/api/groups/:id/messages", auth, async (req, res) => {
     }
 });
 
+// ====================== WEBSOCKET AUTHENTICATION ======================
+io.use((socket, next) => {
+    // Try to get token from auth object (Socket.IO v4+)
+    const token = socket.handshake.auth?.token || socket.handshake.headers?.authorization?.split(' ')[1];
+    
+    if (!token) {
+        console.log('⚠️ Socket connection without token');
+        // Allow connection but validate on group join
+        return next();
+    }
+
+    try {
+        const decoded = jwt.verify(token, JWT_SECRET);
+        socket.userId = decoded.userId;
+        socket.user = decoded;
+        console.log(`✅ Socket authenticated for user ${decoded.userId}`);
+        next();
+    } catch (err) {
+        console.log('⚠️ Socket connection with invalid token');
+        // Allow connection but validate on group join
+        next();
+    }
+});
+
 // ====================== WEBSOCKET FOR CHAT ======================
+const webrtcPeers = new Map();
+
 io.on('connection', (socket) => {
-    console.log('✅ Client connected:', socket.id);
+    console.log('✅ Client connected:', socket.id, socket.userId ? `(User: ${socket.userId})` : '(Unauthenticated)');
+
+    // WebRTC Signaling: Registration
+    socket.on('register', (data) => {
+        const { peerId, peerName } = data;
+        webrtcPeers.set(socket.id, { peerId, peerName, socketId: socket.id });
+        console.log(`👤 WebRTC Peer registered: ${peerName} (${peerId})`);
+        io.emit('peers-update', Array.from(webrtcPeers.values()));
+    });
+
+    // WebRTC Signaling: Offer
+    socket.on('webrtc-offer', (data) => {
+        socket.to(data.targetSocketId).emit('webrtc-offer', {
+            offer: data.offer,
+            senderSocketId: socket.id,
+            senderName: webrtcPeers.get(socket.id)?.peerName || 'Unknown Peer'
+        });
+    });
+
+    // WebRTC Signaling: Answer
+    socket.on('webrtc-answer', (data) => {
+        socket.to(data.targetSocketId).emit('webrtc-answer', {
+            answer: data.answer,
+            senderSocketId: socket.id
+        });
+    });
+
+    // WebRTC Signaling: ICE Candidate
+    socket.on('webrtc-ice-candidate', (data) => {
+        socket.to(data.targetSocketId).emit('webrtc-ice-candidate', {
+            candidate: data.candidate,
+            senderSocketId: socket.id
+        });
+    });
 
     socket.on('join:group', async ({ groupId, userId }) => {
         try {
-            console.log(`👤 User ${userId} attempting to join group ${groupId}`);
-            const permission = await checkGroupPermission(userId, groupId);
+            // Use userId from socket if available, otherwise use provided userId
+            const actualUserId = socket.userId || userId;
+            console.log(`👤 User ${actualUserId} attempting to join group ${groupId}`);
+            const permission = await checkGroupPermission(actualUserId, groupId);
             if (permission.allowed) {
                 socket.join(`group-${groupId}`);
-                console.log(`✅ User ${userId} joined group ${groupId} successfully`);
+                console.log(`✅ User ${actualUserId} joined group ${groupId} successfully`);
             } else {
-                console.log(`❌ User ${userId} denied access to group ${groupId}`);
+                console.log(`❌ User ${actualUserId} denied access to group ${groupId}`);
             }
         } catch (err) {
             console.error('Join group error:', err);
@@ -1558,6 +1667,10 @@ io.on('connection', (socket) => {
 
     socket.on('disconnect', () => {
         console.log('❌ Client disconnected:', socket.id);
+        if (webrtcPeers.has(socket.id)) {
+            webrtcPeers.delete(socket.id);
+            io.emit('peers-update', Array.from(webrtcPeers.values()));
+        }
     });
 });
 
@@ -1624,7 +1737,7 @@ app.post("/api/peers/store-file", auth, upload.single("file"), async (req, res) 
 app.get("/api/peers/retrieve-file/:filename", auth, async (req, res) => {
     try {
         const { filename } = req.params;
-        const filePath = uploadPath(filename);
+        const filePath = path.join(__dirname, "uploads", filename);
         
         if (!fs.existsSync(filePath)) {
             return res.status(404).json({ error: "File not found on this peer" });

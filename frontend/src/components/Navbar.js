@@ -21,7 +21,14 @@ export default function Navbar({
           <span></span>
         </button>
 
-        <h1 className="app-title">🌐 PeerX</h1>
+        <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginRight: "1rem" }}>
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M12 2L2 7L12 12L22 7L12 2Z" fill="var(--color-primary-500)"/>
+            <path d="M2 17L12 22L22 17" stroke="var(--color-primary-500)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+            <path d="M2 12L12 17L22 12" stroke="var(--color-primary-500)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+          </svg>
+          <h1 className="app-title" style={{ margin: 0, fontSize: "1.25rem", color: "var(--text-primary)" }}>PeerX</h1>
+        </div>
         <input
           type="text"
           className="navbar-search"

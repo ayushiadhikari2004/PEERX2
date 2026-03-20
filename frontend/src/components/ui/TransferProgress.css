@@ -1,0 +1,106 @@
+.transfer-panel {
+  margin-bottom: var(--space-6);
+  background: var(--bg-surface);
+}
+
+.transfer-panel-title {
+  font-size: 1.1rem;
+  margin-top: 0;
+  margin-bottom: var(--space-4);
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.transfer-panel-title::before {
+  content: '⚡';
+}
+
+.transfer-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.transfer-item {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  background: var(--bg-main);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-color);
+  transition: all var(--transition-fast);
+}
+
+.transfer-item.completed {
+  border-color: var(--color-success);
+  background: rgba(16, 185, 129, 0.05);
+}
+
+.transfer-info {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.transfer-filename {
+  font-weight: 600;
+  font-size: 0.95rem;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 80%;
+}
+
+.transfer-percentage {
+  font-weight: 700;
+  color: var(--color-primary-600);
+  font-size: 0.95rem;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Chunk Grid System */
+.chunk-grid-container {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  width: 100%;
+}
+
+.chunk-block {
+  flex: 1 1 calc(2% - 2px); /* Fits exactly 50 blocks perfectly on desktop */
+  height: 8px;
+  border-radius: 2px;
+  background: var(--border-color);
+  transition: background 0.1s ease-in-out;
+}
+
+/* Download specific chunk coloring */
+.chunk-block.download.filled { background-color: var(--color-success); box-shadow: 0 0 5px var(--color-success); }
+.chunk-block.download.active { background-color: var(--color-success); animation: pulse-chunk 1s infinite alternate; }
+
+/* Upload specific chunk coloring */
+.chunk-block.upload.filled { background-color: var(--color-primary-500); box-shadow: 0 0 5px var(--color-primary-500); }
+.chunk-block.upload.active { background-color: var(--color-primary-500); animation: pulse-chunk 1s infinite alternate; }
+
+.transfer-meta {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+@keyframes pulse-chunk {
+  from { opacity: 0.4; transform: scale(0.9); }
+  to { opacity: 1; transform: scale(1.1); }
+}
+
+@media (max-width: 640px) {
+  .chunk-block {
+    flex: 1 1 calc(4% - 2px); /* Break out into two rows on mobile */
+  }
+}

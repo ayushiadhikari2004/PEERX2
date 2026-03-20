@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import { io } from 'socket.io-client';
 import './FileManager.css';
 import GroupChat from './GroupChat';
 
@@ -34,8 +35,53 @@ const FileManager = ({ group, user, API, BASE_API, onBack, notify }) => {
   const [showMembers, setShowMembers] = useState(false);
   const [members, setMembers] = useState([]);
   
-  // Show chat
-  const [showChat, setShowChat] = useState(false);
+  // Show chat - open by default when navigating from Chat page
+  const [showChat, setShowChat] = useState(() => {
+    const shouldOpen = sessionStorage.getItem('peerx_open_chat');
+    if (shouldOpen) {
+      sessionStorage.removeItem('peerx_open_chat');
+      return true;
+    }
+    return false;
+  });
+
+  // WebSocket connection
+  const socketRef = useRef(null);
+
+  // ===== P2P WebRTC state =====
+  const [p2pRoomId, setP2pRoomId] = useState('');
+  const [p2pStatus, setP2pStatus] = useState('Disconnected');
+  const [p2pLog, setP2pLog] = useState([]);
+  const [p2pSendProgress, setP2pSendProgress] = useState({ pct: 0, text: '0%', details: '' });
+  const [p2pRecvProgress, setP2pRecvProgress] = useState({ pct: 0, text: '0%', details: '' });
+  const [p2pReceivingFileName, setP2pReceivingFileName] = useState('');
+  const [p2pDownloadUrl, setP2pDownloadUrl] = useState(null);
+
+  const pcRef = useRef(null);
+  const dataChannelRef = useRef(null);
+  const isPoliteRef = useRef(false);
+
+  const CHUNK_SIZE = 256 * 1024;
+  const MAX_BUFFERED_AMOUNT = 16 * 1024 * 1024;
+  const CHUNK_ACK_TIMEOUT_MS = 8000;
+  const MAX_CHUNK_RETRIES = 5;
+
+  const sendStateRef = useRef({
+    file: null,
+    offset: 0,
+    totalChunks: 0,
+    sentChunks: 0,
+    inFlightChunkIndex: null,
+    inFlightChunkData: null,
+    retries: 0,
+    ackTimer: null,
+  });
+
+  const recvStateRef = useRef({
+    meta: null,
+    receivedChunks: 0,
+    chunks: [],
+  });
 
   useEffect(() => {
     if (group) {
@@ -43,6 +89,589 @@ const FileManager = ({ group, user, API, BASE_API, onBack, notify }) => {
       fetchFiles();
     }
   }, [group, currentFolder]);
+
+  // Poll for file updates more frequently (every 2 seconds) to catch files from other PCs
+  // This is needed because each PC has its own backend, so WebSocket events don't cross boundaries
+  useEffect(() => {
+    if (!group) return;
+
+    console.log('🔄 Starting file polling for group:', group.id || group._id);
+    
+    const pollInterval = setInterval(() => {
+      console.log('🔄 Polling for file updates...');
+      fetchFiles();
+    }, 2000); // Poll every 2 seconds
+
+    // Also refresh when the tab becomes visible (user switches back to the tab)
+    const handleVisibilityChange = () => {
+      if (!document.hidden) {
+        console.log('👁️ Tab became visible, refreshing files...');
+        fetchFiles();
+        fetchFolders();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    // Refresh on window focus
+    const handleFocus = () => {
+      console.log('🎯 Window focused, refreshing files...');
+      fetchFiles();
+      fetchFolders();
+    };
+    window.addEventListener('focus', handleFocus);
+
+    return () => {
+      console.log('🛑 Stopping file polling');
+      clearInterval(pollInterval);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('focus', handleFocus);
+    };
+    // Note: fetchFiles and fetchFolders are not in deps because they use latest state from closure
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [group, currentFolder]);
+
+  // WebSocket connection and event listeners
+  useEffect(() => {
+    if (!group || !user) return;
+
+    // Get the WebSocket URL (same host as API but without /api)
+    let wsUrl = BASE_API.replace(/\/api\/?$/, '');
+    // If BASE_API doesn't have /api, use it as is
+    if (wsUrl === BASE_API && !BASE_API.endsWith('/api')) {
+      wsUrl = BASE_API;
+    }
+    // Ensure we have a valid URL
+    if (!wsUrl.startsWith('http')) {
+      // Fallback: construct from window location
+      const protocol = window.location.protocol === 'https:' ? 'https:' : 'http:';
+      const hostname = window.location.hostname;
+      wsUrl = `${protocol}//${hostname}:5000`;
+    }
+    
+    console.log('🔌 Connecting to WebSocket:', wsUrl);
+    
+    // Connect to Socket.IO server
+    const token = localStorage.getItem('token');
+    socketRef.current = io(wsUrl, {
+      transports: ['websocket', 'polling'],
+      withCredentials: true,
+      auth: {
+        token: token
+      }
+    });
+
+    socketRef.current.on('connect', () => {
+      console.log('✅ WebSocket connected:', socketRef.current.id);
+      
+      // Join the group room
+      const groupId = group.id || group._id;
+      const userId = user.id || user._id;
+      
+      socketRef.current.emit('join:group', { groupId, userId });
+      console.log(`📡 Joined group room: group-${groupId}`);
+    });
+
+    socketRef.current.on('disconnect', () => {
+      console.log('❌ WebSocket disconnected');
+    });
+
+    socketRef.current.on('connect_error', (error) => {
+      console.error('WebSocket connection error:', error);
+    });
+
+    // Listen for file upload events
+    socketRef.current.on('file:uploaded', (data) => {
+      console.log('📁 File uploaded event received:', data);
+      // Refresh the file list to show the new file
+      fetchFiles();
+      // Show notification if file was uploaded by another user
+      if (data.uploader !== (user.id || user._id)) {
+        notify(`New file uploaded: ${data.file?.originalName || 'Unknown'}`, 'success');
+      }
+    });
+
+    // Listen for file deletion events
+    socketRef.current.on('file:deleted', (data) => {
+      console.log('🗑️ File deleted event received:', data);
+      // Refresh the file list
+      fetchFiles();
+    });
+
+    // Cleanup on unmount
+    return () => {
+      if (socketRef.current) {
+        const groupId = group.id || group._id;
+        socketRef.current.emit('leave:group', { groupId });
+        socketRef.current.disconnect();
+        console.log('🔌 WebSocket disconnected and cleaned up');
+      }
+    };
+    // Note: fetchFiles is not in dependencies because it's recreated every render
+    // and uses the latest group/currentFolder from closure. The WebSocket connection
+    // is recreated when group/user changes, ensuring fresh closures.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [group, user, BASE_API, notify]);
+
+  // ===== Helpers for P2P UI =====
+  const appendP2pLog = (msg) => {
+    setP2pLog((prev) => [
+      ...prev,
+      `[${new Date().toLocaleTimeString()}] ${msg}`,
+    ].slice(-200));
+  };
+
+  const updateSendProgress = () => {
+    const s = sendStateRef.current;
+    if (!s.file) {
+      setP2pSendProgress({ pct: 0, text: '0%', details: '' });
+      return;
+    }
+    const pct = s.totalChunks ? Math.round((s.sentChunks / s.totalChunks) * 100) : 0;
+    setP2pSendProgress({
+      pct,
+      text: `${pct}%`,
+      details: `${s.sentChunks}/${s.totalChunks} chunks`,
+    });
+  };
+
+  const updateRecvProgress = () => {
+    const r = recvStateRef.current;
+    if (!r.meta) {
+      setP2pRecvProgress({ pct: 0, text: '0%', details: '' });
+      return;
+    }
+    const pct = r.meta.totalChunks
+      ? Math.round((r.receivedChunks / r.meta.totalChunks) * 100)
+      : 0;
+    setP2pRecvProgress({
+      pct,
+      text: `${pct}%`,
+      details: `${r.receivedChunks}/${r.meta.totalChunks} chunks`,
+    });
+  };
+
+  const resetP2pState = () => {
+    sendStateRef.current = {
+      file: null,
+      offset: 0,
+      totalChunks: 0,
+      sentChunks: 0,
+      inFlightChunkIndex: null,
+      inFlightChunkData: null,
+      retries: 0,
+      ackTimer: null,
+    };
+    recvStateRef.current = {
+      meta: null,
+      receivedChunks: 0,
+      chunks: [],
+    };
+    setP2pDownloadUrl(null);
+    setP2pReceivingFileName('');
+    updateSendProgress();
+    updateRecvProgress();
+  };
+
+  // ===== WebRTC core =====
+  const ensurePeerConnection = () => {
+    if (pcRef.current) return pcRef.current;
+
+    const config = {
+      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
+    };
+    const pc = new RTCPeerConnection(config);
+    pcRef.current = pc;
+
+    pc.onicecandidate = (event) => {
+      if (event.candidate && socketRef.current && p2pRoomId) {
+        socketRef.current.emit('p2p:signal', {
+          roomId: p2pRoomId,
+          data: { type: 'ice-candidate', candidate: event.candidate },
+        });
+      }
+    };
+
+    pc.onconnectionstatechange = () => {
+      const state = pc.connectionState;
+      if (state === 'connected') {
+        setP2pStatus('Connected');
+      } else if (state === 'disconnected' || state === 'failed' || state === 'closed') {
+        setP2pStatus('Disconnected');
+      }
+    };
+
+    pc.ondatachannel = (event) => {
+      appendP2pLog('DataChannel received from remote.');
+      setupDataChannel(event.channel);
+    };
+
+    return pc;
+  };
+
+  const setupDataChannel = (channel) => {
+    dataChannelRef.current = channel;
+    channel.binaryType = 'arraybuffer';
+
+    channel.onopen = () => {
+      appendP2pLog('DataChannel open.');
+      setP2pStatus('Connected');
+    };
+
+    channel.onclose = () => {
+      appendP2pLog('DataChannel closed.');
+      setP2pStatus('Disconnected');
+    };
+
+    channel.onerror = (err) => {
+      appendP2pLog(`DataChannel error: ${err.message || err.toString()}`);
+    };
+
+    channel.onmessage = (event) => {
+      if (typeof event.data === 'string') {
+        handleControlMessage(event.data);
+      } else {
+        handleBinaryChunk(event.data);
+      }
+    };
+
+    channel.bufferedAmountLowThreshold = MAX_BUFFERED_AMOUNT / 2;
+    channel.onbufferedamountlow = () => {
+      const s = sendStateRef.current;
+      if (s.file && s.inFlightChunkIndex === null) {
+        sendNextChunk();
+      }
+    };
+  };
+
+  const makeOffer = async () => {
+    const pc = ensurePeerConnection();
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    if (socketRef.current && p2pRoomId) {
+      socketRef.current.emit('p2p:signal', {
+        roomId: p2pRoomId,
+        data: { type: 'offer', sdp: offer },
+      });
+      appendP2pLog('Sent offer.');
+    }
+  };
+
+  const handleSignalingData = async (data) => {
+    const pc = ensurePeerConnection();
+    if (data.type === 'offer') {
+      appendP2pLog('Received offer.');
+      await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+      if (socketRef.current && p2pRoomId) {
+        socketRef.current.emit('p2p:signal', {
+          roomId: p2pRoomId,
+          data: { type: 'answer', sdp: answer },
+        });
+        appendP2pLog('Sent answer.');
+      }
+    } else if (data.type === 'answer') {
+      appendP2pLog('Received answer.');
+      await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
+    } else if (data.type === 'ice-candidate') {
+      try {
+        await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+      } catch (e) {
+        console.error('Error adding ICE candidate', e);
+      }
+    }
+  };
+
+  // ===== Control message protocol (JSON over DataChannel) =====
+  const sendControlMessage = (obj) => {
+    const channel = dataChannelRef.current;
+    if (!channel || channel.readyState !== 'open') return;
+    channel.send(JSON.stringify(obj));
+  };
+
+  const handleControlMessage = (jsonStr) => {
+    let msg;
+    try {
+      msg = JSON.parse(jsonStr);
+    } catch {
+      return;
+    }
+
+    switch (msg.type) {
+      case 'file-meta': {
+        const meta = {
+          name: msg.name,
+          size: msg.size,
+          chunkSize: msg.chunkSize,
+          totalChunks: msg.totalChunks,
+        };
+        recvStateRef.current = {
+          meta,
+          receivedChunks: 0,
+          chunks: new Array(meta.totalChunks),
+        };
+        setP2pReceivingFileName(meta.name);
+        appendP2pLog(
+          `Receiving file: ${meta.name} (${Math.round(meta.size / 1024)} KB)`
+        );
+        updateRecvProgress();
+        setP2pDownloadUrl(null);
+        break;
+      }
+
+      case 'chunk-ack':
+        handleChunkAck(msg.index);
+        break;
+
+      case 'transfer-complete':
+        appendP2pLog('Sender indicates transfer complete.');
+        break;
+
+      default:
+        break;
+    }
+  };
+
+  // ===== Sending side: chunking + retry =====
+  const clearAckTimer = () => {
+    const s = sendStateRef.current;
+    if (s.ackTimer) {
+      clearTimeout(s.ackTimer);
+      s.ackTimer = null;
+    }
+  };
+
+  const startAckTimer = (index) => {
+    clearAckTimer();
+    sendStateRef.current.ackTimer = setTimeout(() => {
+      appendP2pLog(`ACK timeout for chunk ${index}, retrying...`);
+      retryCurrentChunk();
+    }, CHUNK_ACK_TIMEOUT_MS);
+  };
+
+  const retryCurrentChunk = () => {
+    const s = sendStateRef.current;
+    const channel = dataChannelRef.current;
+    if (s.inFlightChunkIndex === null || !s.inFlightChunkData || !channel) return;
+    if (channel.readyState !== 'open') return;
+
+    if (s.retries >= MAX_CHUNK_RETRIES) {
+      appendP2pLog(
+        `Chunk ${s.inFlightChunkIndex} failed after ${MAX_CHUNK_RETRIES} retries. Aborting transfer.`
+      );
+      sendStateRef.current.file = null;
+      return;
+    }
+
+    if (channel.bufferedAmount > MAX_BUFFERED_AMOUNT) {
+      setTimeout(retryCurrentChunk, 1000);
+      return;
+    }
+
+    s.retries += 1;
+    appendP2pLog(
+      `Resending chunk ${s.inFlightChunkIndex} (attempt ${s.retries}).`
+    );
+    try {
+      channel.send(s.inFlightChunkData);
+    } catch (e) {
+      appendP2pLog(
+        `Retry send error for chunk ${s.inFlightChunkIndex}: ${
+          e.message || e.toString()
+        }`
+      );
+      setTimeout(retryCurrentChunk, 2000);
+      return;
+    }
+    startAckTimer(s.inFlightChunkIndex);
+  };
+
+  const handleChunkAck = (index) => {
+    const s = sendStateRef.current;
+    if (s.inFlightChunkIndex === null || index !== s.inFlightChunkIndex) return;
+
+    clearAckTimer();
+    s.sentChunks += 1;
+    s.inFlightChunkIndex = null;
+    s.inFlightChunkData = null;
+    s.retries = 0;
+    updateSendProgress();
+
+    if (s.sentChunks >= s.totalChunks) {
+      appendP2pLog('File transfer completed on sender side.');
+      sendStateRef.current.file = null;
+      return;
+    }
+
+    sendNextChunk();
+  };
+
+  const sendNextChunk = () => {
+    const s = sendStateRef.current;
+    const channel = dataChannelRef.current;
+    if (!s.file || s.inFlightChunkIndex !== null || !channel) return;
+    if (channel.readyState !== 'open') return;
+
+    if (channel.bufferedAmount > MAX_BUFFERED_AMOUNT) {
+      appendP2pLog('Backpressure: delaying send until bufferedAmount is lower.');
+      return;
+    }
+
+    if (s.offset >= s.file.size) {
+      appendP2pLog('All chunks queued / sent. Waiting for final acks.');
+      sendControlMessage({ type: 'transfer-complete' });
+      return;
+    }
+
+    const index = s.sentChunks;
+    const slice = s.file.slice(s.offset, s.offset + CHUNK_SIZE);
+    const reader = new FileReader();
+
+    reader.onerror = (err) => {
+      appendP2pLog(`FileReader error: ${err?.message || 'read error'}`);
+    };
+
+    reader.onload = () => {
+      const arrayBuffer = reader.result;
+      try {
+        channel.send(arrayBuffer);
+      } catch (e) {
+        appendP2pLog(
+          `Send error for chunk ${index}: ${e.message || e.toString()}`
+        );
+        sendStateRef.current.inFlightChunkIndex = index;
+        sendStateRef.current.inFlightChunkData = arrayBuffer;
+        sendStateRef.current.retries = 0;
+        startAckTimer(index);
+        return;
+      }
+
+      sendStateRef.current.inFlightChunkIndex = index;
+      sendStateRef.current.inFlightChunkData = arrayBuffer;
+      sendStateRef.current.retries = 0;
+      startAckTimer(index);
+      sendStateRef.current.offset += slice.size;
+      appendP2pLog(
+        `Chunk ${index + 1}/${s.totalChunks} sent (${Math.round(
+          slice.size / 1024
+        )} KB).`
+      );
+    };
+
+    reader.readAsArrayBuffer(slice);
+  };
+
+  const startFileTransferP2p = (file) => {
+    if (!file) {
+      notify('Select a file to send over P2P', 'error');
+      return;
+    }
+    const channel = dataChannelRef.current;
+    if (!channel || channel.readyState !== 'open') {
+      notify('P2P DataChannel is not open yet', 'error');
+      return;
+    }
+
+    resetP2pState();
+    sendStateRef.current.file = file;
+    sendStateRef.current.offset = 0;
+    sendStateRef.current.totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+    sendStateRef.current.sentChunks = 0;
+    updateSendProgress();
+
+    sendControlMessage({
+      type: 'file-meta',
+      name: file.name,
+      size: file.size,
+      chunkSize: CHUNK_SIZE,
+      totalChunks: sendStateRef.current.totalChunks,
+    });
+
+    appendP2pLog(
+      `Starting transfer: ${file.name}, ${Math.round(
+        file.size / 1024
+      )} KB in ${sendStateRef.current.totalChunks} chunks.`
+    );
+
+    sendNextChunk();
+  };
+
+  // ===== Receiving side: binary chunks & reconstruction =====
+  const handleBinaryChunk = (arrayBuffer) => {
+    const r = recvStateRef.current;
+    if (!r.meta) {
+      appendP2pLog('Received binary chunk before metadata; ignoring.');
+      return;
+    }
+
+    const index = r.receivedChunks;
+    r.chunks[index] = arrayBuffer;
+    r.receivedChunks += 1;
+    updateRecvProgress();
+
+    sendControlMessage({ type: 'chunk-ack', index });
+
+    appendP2pLog(
+      `Received chunk ${index + 1}/${r.meta.totalChunks} (${Math.round(
+        arrayBuffer.byteLength / 1024
+      )} KB).`
+    );
+
+    if (r.receivedChunks === r.meta.totalChunks) {
+      appendP2pLog('All chunks received, reconstructing file.');
+      const blob = new Blob(r.chunks, { type: 'application/octet-stream' });
+      const url = URL.createObjectURL(blob);
+      setP2pDownloadUrl(url);
+    }
+  };
+
+  // ===== P2P room join / signaling wiring =====
+  const joinP2pRoom = () => {
+    if (!socketRef.current) {
+      notify('Socket not connected yet', 'error');
+      return;
+    }
+    const room = p2pRoomId || group.inviteCode || group.id;
+    setP2pRoomId(room);
+    socketRef.current.emit('p2p:join-room', room);
+    appendP2pLog(`Joined P2P room: ${room}`);
+  };
+
+  // Attach P2P-related Socket.IO listeners once socket exists
+  useEffect(() => {
+    const socket = socketRef.current;
+    if (!socket) return;
+
+    const handleRoomInfo = ({ numClients }) => {
+      appendP2pLog(`P2P room has ${numClients} client(s).`);
+      isPoliteRef.current = numClients > 1;
+    };
+
+    const handleReady = () => {
+      appendP2pLog('P2P room ready for negotiation.');
+      const pc = ensurePeerConnection();
+      if (!isPoliteRef.current) {
+        const channel = pc.createDataChannel('fileData', { ordered: true });
+        setupDataChannel(channel);
+        makeOffer();
+      }
+    };
+
+    const handleSignal = async ({ data }) => {
+      await handleSignalingData(data);
+    };
+
+    socket.on('p2p:room-info', handleRoomInfo);
+    socket.on('p2p:ready', handleReady);
+    socket.on('p2p:signal', handleSignal);
+
+    return () => {
+      socket.off('p2p:room-info', handleRoomInfo);
+      socket.off('p2p:ready', handleReady);
+      socket.off('p2p:signal', handleSignal);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [group]);
 
   const fetchFolders = async () => {
     try {
@@ -259,6 +888,17 @@ const FileManager = ({ group, user, API, BASE_API, onBack, notify }) => {
           </p>
         </div>
         <div className="file-manager-actions">
+          <button 
+            onClick={() => {
+              fetchFiles();
+              fetchFolders();
+              notify('Refreshed!', 'success');
+            }} 
+            className="btn-secondary"
+            title="Refresh file list"
+          >
+            🔄 Refresh
+          </button>
           <button onClick={() => setShowMembers(true)} className="btn-secondary">
             👥 Members
           </button>
@@ -354,6 +994,104 @@ const FileManager = ({ group, user, API, BASE_API, onBack, notify }) => {
               <button onClick={() => setShowNewFolder(true)} className="btn-secondary">
                 📁 New Folder
               </button>
+            </div>
+          )}
+
+          {/* P2P Section (Network Share only) */}
+          {isNetworkShare && (
+            <div className="p2p-section card">
+              <h3>🔀 Peer-to-Peer Transfer (WebRTC)</h3>
+              <p className="muted">
+                Connect two browsers in the same Network Share and transfer files directly
+                using WebRTC data channels (no server-side file forwarding).
+              </p>
+
+              <div className="p2p-row">
+                <div className="p2p-field">
+                  <label>Room ID</label>
+                  <input
+                    type="text"
+                    value={p2pRoomId || group.inviteCode || group.id}
+                    onChange={(e) => setP2pRoomId(e.target.value)}
+                    placeholder="Shared room ID"
+                  />
+                </div>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={joinP2pRoom}
+                >
+                  Join P2P Room
+                </button>
+                <span className="p2p-status">Status: {p2pStatus}</span>
+              </div>
+
+              <div className="p2p-row">
+                <div className="p2p-field">
+                  <label>Select file to send (P2P)</label>
+                  <input
+                    type="file"
+                    onChange={(e) => {
+                      if (e.target.files && e.target.files[0]) {
+                        startFileTransferP2p(e.target.files[0]);
+                      }
+                    }}
+                  />
+                </div>
+              </div>
+
+              <div className="p2p-progress">
+                <div className="p2p-progress-block">
+                  <strong>Send progress</strong>
+                  <div className="p2p-progress-bar">
+                    <div
+                      className="p2p-progress-inner"
+                      style={{ width: `${p2pSendProgress.pct}%` }}
+                    />
+                  </div>
+                  <div className="p2p-progress-label">
+                    <span>{p2pSendProgress.text}</span>
+                    <span>{p2pSendProgress.details}</span>
+                  </div>
+                </div>
+
+                <div className="p2p-progress-block">
+                  <strong>Receive progress</strong>
+                  <div className="p2p-progress-bar">
+                    <div
+                      className="p2p-progress-inner"
+                      style={{ width: `${p2pRecvProgress.pct}%` }}
+                    />
+                  </div>
+                  <div className="p2p-progress-label">
+                    <span>{p2pRecvProgress.text}</span>
+                    <span>{p2pRecvProgress.details}</span>
+                  </div>
+                  {p2pReceivingFileName && (
+                    <div className="p2p-file-name">
+                      Receiving: <strong>{p2pReceivingFileName}</strong>
+                    </div>
+                  )}
+                  {p2pDownloadUrl && (
+                    <div className="p2p-download">
+                      <a href={p2pDownloadUrl} download={p2pReceivingFileName || 'file'}>
+                        ⬇️ Download received file
+                      </a>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="p2p-log">
+                <strong>Transfer log</strong>
+                <div className="p2p-log-box">
+                  {p2pLog.map((line, idx) => (
+                    <div key={idx} className="p2p-log-line">
+                      {line}
+                    </div>
+                  ))}
+                </div>
+              </div>
             </div>
           )}
 

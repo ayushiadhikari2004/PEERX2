@@ -262,6 +262,19 @@ const LOCAL_NETWORK = getNetworkId(LOCAL_IP);
 
 // ====================== ENHANCED PEER DISCOVERY ======================
 let discoveredPeers = new Map();
+// ====================== WebRTC Signaling ======================
+// Registered WebRTC peers for direct socket-to-socket signaling.
+// Keyed by socket.id so we can route offers/answers/ICE to the correct socket.
+const webrtcRegisteredPeers = new Map(); // socketId -> { socketId, peerId, peerName }
+
+function broadcastWebrtcPeers() {
+  const peers = Array.from(webrtcRegisteredPeers.values()).map((p) => ({
+    socketId: p.socketId,
+    peerId: p.peerId,
+    peerName: p.peerName,
+  }));
+  io.emit("peers-update", peers);
+}
 const udpServer = dgram.createSocket("udp4");
 
 udpServer.on("message", async (msg, rinfo) => {
@@ -1323,10 +1336,11 @@ app.get("/api/groups/:id/messages", auth, async (req, res) => {
     }
 });
 
-// ====================== WEBSOCKET FOR CHAT ======================
+// ====================== WEBSOCKET FOR CHAT + P2P SIGNALING ======================
 io.on('connection', (socket) => {
     console.log('Client connected:', socket.id);
 
+    // ---- Group chat rooms ----
     socket.on('join:group', async ({ groupId, userId }) => {
         try {
             const permission = await checkGroupPermission(userId, groupId);
@@ -1376,15 +1390,88 @@ io.on('connection', (socket) => {
             // Broadcast decrypted message to group members
             io.to(`group-${groupId}`).emit('message:received', {
                 ...populatedMessage.toObject(),
-                message: message // Send decrypted to connected clients
+                message // Send decrypted to connected clients
             });
         } catch (err) {
             console.error('Send message error:', err);
         }
     });
 
+    // ====================== WebRTC (DataChannel) signaling ======================
+    // App registers itself with {peerId, peerName}, then uses socket-to-socket signaling:
+    // - webrtc-offer -> webrtc-answer
+    // - webrtc-ice-candidate (ICE relay)
+    socket.on("register", ({ peerId, peerName } = {}) => {
+      if (!peerId) return;
+      webrtcRegisteredPeers.set(socket.id, {
+        socketId: socket.id,
+        peerId,
+        peerName: peerName || "Unknown Peer",
+      });
+      broadcastWebrtcPeers();
+      console.log(`📡 WebRTC registered: ${peerName || "Unknown"} (${peerId}) -> ${socket.id}`);
+    });
+
+    socket.on("webrtc-offer", ({ offer, targetSocketId } = {}) => {
+      if (!offer || !targetSocketId) return;
+      const sender = webrtcRegisteredPeers.get(socket.id);
+      socket.to(targetSocketId).emit("webrtc-offer", {
+        offer,
+        senderSocketId: socket.id,
+        senderName: sender?.peerName || "Unknown",
+      });
+    });
+
+    socket.on("webrtc-answer", ({ answer, targetSocketId } = {}) => {
+      if (!answer || !targetSocketId) return;
+      socket.to(targetSocketId).emit("webrtc-answer", {
+        answer,
+        senderSocketId: socket.id,
+      });
+    });
+
+    socket.on("webrtc-ice-candidate", ({ candidate, targetSocketId } = {}) => {
+      if (!candidate || !targetSocketId) return;
+      socket.to(targetSocketId).emit("webrtc-ice-candidate", {
+        candidate,
+        senderSocketId: socket.id,
+      });
+    });
+
+    // ---- WebRTC P2P signaling for file transfer ----
+    // Room-based: two peers join the same logical roomId.
+    socket.on('p2p:join-room', (roomId) => {
+        if (!roomId) return;
+        const fullRoomId = `p2p-${roomId}`;
+        socket.join(fullRoomId);
+
+        const room = io.sockets.adapter.rooms.get(fullRoomId);
+        const numClients = room ? room.size : 0;
+
+        console.log(`P2P: socket ${socket.id} joined room ${fullRoomId} (${numClients} clients)`);
+
+        // Inform this socket about room info
+        socket.emit('p2p:room-info', { numClients });
+
+        // When there are 2 clients, notify both that negotiation can start
+        if (numClients === 2) {
+            io.to(fullRoomId).emit('p2p:ready');
+        }
+    });
+
+    // Relay WebRTC signaling data (offer/answer/ice) to the other peer(s) in the room.
+    socket.on('p2p:signal', ({ roomId, data }) => {
+        if (!roomId || !data) return;
+        const fullRoomId = `p2p-${roomId}`;
+        socket.to(fullRoomId).emit('p2p:signal', { data });
+    });
+
     socket.on('disconnect', () => {
         console.log('Client disconnected:', socket.id);
+      if (webrtcRegisteredPeers.has(socket.id)) {
+        webrtcRegisteredPeers.delete(socket.id);
+        broadcastWebrtcPeers();
+      }
     });
 });
 

@@ -3,7 +3,7 @@ import React, { createContext, useContext, useEffect, useState } from "react";
 const ThemeContext = createContext();
 
 export function ThemeProvider({ children }) {
-  const [theme, setTheme] = useState(() => {
+  const [theme, setThemeState] = useState(() => {
     // Check localStorage first
     const saved = localStorage.getItem("peerx_theme");
     if (saved) return saved;
@@ -31,14 +31,20 @@ export function ThemeProvider({ children }) {
     }
   }, [theme]);
 
+  const setTheme = (newTheme) => {
+    if (newTheme === "light" || newTheme === "dark") {
+      setThemeState(newTheme);
+    }
+  };
+
   const toggleTheme = () => {
-    setTheme(prevTheme => prevTheme === "light" ? "dark" : "light");
+    setThemeState(prevTheme => prevTheme === "light" ? "dark" : "light");
   };
 
   const isDark = theme === "dark";
 
   return (
-    <ThemeContext.Provider value={{ theme, isDark, toggleTheme }}>
+    <ThemeContext.Provider value={{ theme, isDark, toggleTheme, setTheme }}>
       {children}
     </ThemeContext.Provider>
   );
@@ -47,11 +53,11 @@ export function ThemeProvider({ children }) {
 export function useTheme() {
   const context = useContext(ThemeContext);
   if (!context) {
-    // Fallback if used outside provider
     return {
       theme: "light",
       isDark: false,
       toggleTheme: () => {},
+      setTheme: () => {},
     };
   }
   return context;

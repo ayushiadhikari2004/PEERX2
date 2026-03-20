@@ -1,7 +1,7 @@
 # Start multiple backend instances to test peer discovery
 # Run this script in PowerShell to start 3 peer instances
 
-Write-Host "🚀 Starting peeX Peer Network..." -ForegroundColor Cyan
+Write-Host "🚀 Starting DeCloud Peer Network..." -ForegroundColor Cyan
 Write-Host ""
 
 # Check if MongoDB is running
@@ -22,7 +22,7 @@ function Start-PeerInstance {
     
     Write-Host "Starting $Name on HTTP:$Port, UDP:$PeerPort..." -ForegroundColor Green
     
-    $command = "cd '$PSScriptRoot'; `$env:PORT='$Port'; `$env:PEER_PORT='$PeerPort'; `$env:MONGODB_URI='mongodb://localhost:27017/peex'; node server.js"
+    $command = "cd '$PSScriptRoot'; `$env:PORT='$Port'; `$env:PEER_PORT='$PeerPort'; `$env:MONGODB_URI='mongodb://localhost:27017/decloud'; node server.js"
     
     Start-Process powershell -ArgumentList "-NoExit", "-Command", $command
 }

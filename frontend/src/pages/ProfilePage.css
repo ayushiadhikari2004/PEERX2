@@ -1,0 +1,136 @@
+.profile-page {
+  max-width: 480px;
+}
+
+.profile-header h1 {
+  font-family: var(--font-header);
+  font-weight: 800;
+  font-size: 1.75rem;
+  color: var(--text-primary);
+  margin: 0 0 var(--space-2) 0;
+}
+
+.profile-header p {
+  color: var(--text-muted);
+  font-size: 0.95rem;
+  margin: 0 0 var(--space-8) 0;
+}
+
+.profile-card {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  padding: var(--space-6);
+  border-radius: var(--card-radius);
+  margin-bottom: var(--space-8);
+}
+
+.profile-avatar {
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  background: var(--color-primary-500);
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.75rem;
+  font-weight: 700;
+}
+
+.profile-info h2 {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin: 0 0 var(--space-1) 0;
+}
+
+.profile-email {
+  color: var(--text-secondary);
+  font-size: 0.95rem;
+  margin: 0 0 var(--space-2) 0;
+}
+
+.profile-meta {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.profile-section {
+  margin-bottom: var(--space-8);
+}
+
+.profile-section h3 {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin: 0 0 var(--space-4) 0;
+}
+
+.storage-bar {
+  height: 8px;
+  border-radius: var(--radius-full);
+  overflow: hidden;
+  background: rgba(139, 115, 85, 0.08);
+  margin-bottom: var(--space-2);
+}
+
+.storage-fill {
+  height: 100%;
+  background: var(--color-primary-500);
+  border-radius: var(--radius-full);
+  transition: width 0.3s ease;
+}
+
+.storage-text {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  margin: 0;
+}
+
+.theme-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-4);
+  background: var(--clay-card);
+  border-radius: var(--radius-md);
+}
+
+.theme-row span {
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.theme-toggle-btn {
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-md);
+  font-weight: 600;
+  font-size: 0.9rem;
+  cursor: pointer;
+  background: var(--clay-card-lighter);
+  color: var(--text-primary);
+}
+
+.theme-toggle-btn:hover {
+  filter: brightness(0.97);
+}
+
+.profile-actions {
+  margin-top: var(--space-8);
+}
+
+.logout-btn {
+  padding: var(--space-3) var(--space-6);
+  background: transparent;
+  border: 1px solid var(--color-error);
+  color: var(--color-error);
+  border-radius: var(--radius-md);
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.logout-btn:hover {
+  background: rgba(200, 107, 107, 0.1);
+}
