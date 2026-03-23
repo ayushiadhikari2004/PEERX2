@@ -2,20 +2,40 @@
 
 > A secure, peer-to-peer file sharing platform with end-to-end encryption for local networks.
 
-PeerX is a peer to peer file sharing platform that enables secure file sharing across devices on the same local network. With automatic peer discovery, end-to-end encryption, and instant network-wide file sharing, PeerX transforms your local network into a private cloud.
+PeerX is a peer-to-peer file sharing platform that enables secure file sharing across devices on the same network. By leveraging WebRTC data channels, PeerX bypasses traditional server bottlenecks to transfer files directly between devices—meaning transfers are incredibly fast and your files never sit on a central server.
 
 ---
 
 ## ✨ Key Features
 
-- 🔒 **End-to-End Encryption** - All files encrypted with AES-256-GCM
-- 🌐 **Automatic Peer Discovery** - Devices on the same WiFi network are discovered automatically
-- 📤 **Network Share** - Instant file sharing with all connected devices
-- 👥 **Private Groups** - Create secure groups for selective file sharing
-- 💾 **Storage Management** - Track storage usage with visual indicators
-- 🎨 **Modern UI** - Clean, responsive interface with dark mode support
-- 🔄 **Real-time Updates** - Live peer status and file synchronization
-- 📱 **Cross-Platform** - Works on desktop, mobile, and tablets
+- ⚡️ **WebRTC Direct P2P File Sharing** - Files are sent directly between browsers bypassing the server.
+- 📦 **Automated Chunking & Backpressure** - Large files are actively sliced into 16KB chunks to prevent memory leaks and ensure stable browser transmission.
+- 📁 **Multi-File Batch Uploads** - Select and send multiple files sequentially using a robust, built-in queue system.
+- 🔒 **End-to-End Encryption** - Secure transfers running natively in the browser.
+- 🌐 **Automatic Peer Discovery** - Devices on the same WiFi network are discovered automatically via Socket.IO signaling.
+- 👥 **Private Groups & Network Share** - Create secure hubs for selective sharing or broadcast to everyone on the network.
+- 📊 **Real-time Transfer History** - Live visual progress bars and persistent logs for all sent and received files.
+- 🎨 **Modern Glassmorphism UI** - Clean, responsive interface with beautiful dynamic React experiences.
+
+---
+
+## 🏗️ Architecture
+
+PeerX combines a traditional server for user management and peer discovery with WebRTC for the heavy lifting of raw file transfers.
+
+```text
+       [React Frontend] <=====> [React Frontend]
+        (Sender Peer)   WebRTC   (Receiver Peer)
+         |     \        Direct        /      |
+         |      \----| DataChannel |-----/       |
+         |                                   |
+         |----- (Socket.IO Signaling) -------|
+                         |
+             [Node.js / Express Server]
+             (Authentication & Peer Discovery)
+                         |
+                     [MongoDB]
+```
 
 ---
 
@@ -38,132 +58,60 @@ PeerX is a peer to peer file sharing platform that enables secure file sharing a
 2. **Install dependencies**
    ```bash
    # Install backend dependencies
-   cd backend
-   npm install
+   cd backend && npm install
 
    # Install frontend dependencies
-   cd ../frontend
-   npm install
+   cd ../frontend && npm install
    cd ..
    ```
 
 3. **Set up environment variables**
-   - Copy `.env.example` to `.env` in the `backend/` folder and fill in the required values.
+   - Copy `.env.example` to `.env` in the `backend/` folder and assign your own `JWT_SECRET`.
 
 4. **Start MongoDB**
+   *(Ensure the `mongod` service is running in your OS)*
+
+5. **Start the backend server & frontend client**
    ```bash
-   # Windows
-   mongod
+   # Terminal 1
+   cd backend && node server.js
 
-   # Mac (with Homebrew)
-   brew services start mongodb-community
-
-   # Linux
-   sudo systemctl start mongod
+   # Terminal 2
+   cd frontend && npm start
    ```
 
-5. **Start the backend server**
-   ```bash
-   cd backend
-   node server.js
-   ```
-
-6. **Start the frontend** (in a new terminal)
-   ```bash
-   cd frontend
-   npm start
-   ```
-
-7. **Access PeerX**
-   - Local: `http://localhost:3000`
-   - Network: `http://YOUR_IP:3000`
+6. **Access PeerX**
+   Local: `http://localhost:3000`
 
 ---
 
-## 🌐 Network Setup Guide
+## 🌐 Testing on Multiple Devices (Local Network)
 
-### Connecting Multiple Devices
+To truly experience WebRTC peer-to-peer transfers, test it across two devices (e.g., your laptop and your phone) connected to the same Wi-Fi router.
 
-1. Find your local IP address (e.g., `192.168.1.105`).
-2. Update your `.env` file in `backend/` with your IP:
+1. Find your hosting computer's Local IP address (e.g., `192.168.1.105`).
+2. Update your `.env` file in `backend/` to allow CORS from your IP:
    ```env
    FRONTEND_URL=http://localhost:3000,http://192.168.1.105:3000
    ```
-3. Configure your firewall to allow ports 3000, 5000, and 5001.
-4. On other devices (same WiFi), open a browser and go to `http://YOUR_IP:3000`.
+3. Update `.env` in `frontend/` (create if it doesn't exist) so the phone knows where the server is:
+   ```env
+   REACT_APP_API_URL=http://192.168.1.105:5000/api
+   REACT_APP_SIGNALING_URL=http://192.168.1.105:5000
+   ```
+4. On your second device, open a browser and go to `http://192.168.1.105:3000`. You will both appear in the "Peers" tab!
 
 ---
 
-## 📚 Usage Guide
-
-### 1. Account Creation
-- Register and log in from the browser.
-
-### 2. Network Share
-- All devices on the same network join the Network Share automatically.
-- Upload files to share instantly with all devices.
-
-### 3. Private Groups
-- Create groups for selective sharing.
-- Share invite codes to add members.
-
-### 4. Peer Discovery
-- See all devices on your network in the Peers tab.
-
-### 5. File Management
-- Upload, download, and delete files securely.
-
----
-
-## 🏗️ Architecture
-
-```
-Frontend (React) <-> Backend (Node.js/Express) <-> MongoDB
-         |                |                        |
-         |                |                        |
-         |                |-- UDP Peer Discovery --|
-```
-
----
-
-## 🔧 Configuration
-
-### Environment Variables (backend/.env)
+## 🔧 Configuration (backend/.env)
 
 | Variable              | Description                        | Default                      |
 |-----------------------|------------------------------------|------------------------------|
 | PORT                  | Backend server port                | 5000                         |
 | MONGODB_URI           | MongoDB connection string          | mongodb://localhost:27017/peex |
 | JWT_SECRET            | Secret key for JWT signing         | your-jwt-secret-here         |
-| JWT_EXPIRES_IN        | JWT token expiration               | 7d                           |
 | FRONTEND_URL          | Allowed frontend origins           | http://localhost:3000        |
 | MAX_FILE_SIZE         | Max file upload size (bytes)       | 524288000                    |
-| ENCRYPTION_ALGORITHM  | Encryption algorithm               | aes-256-gcm                  |
-| ENABLE_PEER_DISCOVERY | Enable peer discovery              | true                         |
-| PEER_PORT             | UDP port for peer discovery        | 5001                         |
-| NODE_ENV              | Environment mode                   | development                  |
-
----
-
-## 🐛 Troubleshooting
-
-- Ensure all devices are on the same WiFi network.
-- Check firewall settings for required ports.
-- Verify MongoDB is running and accessible.
-- Check `.env` configuration.
-
----
-
-## 🤝 Contributing
-
-Contributions are welcome! Please fork the repo, create a feature branch, and open a pull request.
-
----
-
-## 📄 License
-
-This project is licensed under the MIT License.
-
 
 ---
 
@@ -173,8 +121,6 @@ This project is licensed under the MIT License.
 - GitHub: [@ayushiadhikari2004](https://github.com/ayushiadhikari2004)
 
 ---
-
 <div align="center">
-
-
+  <i>Empowering local networks with fast, direct, and private file sharing.</i>
 </div>
