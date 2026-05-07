@@ -41,7 +41,7 @@
 }
 
 .stat-card {
-  background: linear-gradient(145deg, #FAF8F5 0%, #F2EDE6 100%);
+  background: var(--clay-card);
   border-radius: var(--card-radius);
   padding: var(--space-6);
   display: flex;
@@ -49,6 +49,8 @@
   gap: var(--space-4);
   position: relative;
   overflow: hidden;
+  box-shadow: var(--shadow-sm);
+  border: 1px solid var(--border-color);
 }
 
 .clay-inset {

@@ -57,7 +57,7 @@ cd backend
 echo "MONGODB_URI=mongodb://localhost:27017/personalspace" > .env
 ```
 
-### Option B: Use decloud (default)
+### Option B: Use  (default)
 On this PC:
 ```bash
 cd backend

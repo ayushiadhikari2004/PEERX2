@@ -62,29 +62,58 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* Chunk Grid System */
-.chunk-grid-container {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 2px;
+/* Continuous Progress Track System */
+.modern-progress-track {
   width: 100%;
-}
-
-.chunk-block {
-  flex: 1 1 calc(2% - 2px); /* Fits exactly 50 blocks perfectly on desktop */
-  height: 8px;
-  border-radius: 2px;
+  height: 10px;
   background: var(--border-color);
-  transition: background 0.1s ease-in-out;
+  border-radius: 10px;
+  overflow: hidden;
+  position: relative;
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.05); /* Slight inset for realism */
+  margin-top: 8px;
+  margin-bottom: 8px;
 }
 
-/* Download specific chunk coloring */
-.chunk-block.download.filled { background-color: var(--color-success); box-shadow: 0 0 5px var(--color-success); }
-.chunk-block.download.active { background-color: var(--color-success); animation: pulse-chunk 1s infinite alternate; }
+.modern-progress-fill {
+  height: 100%;
+  border-radius: 10px;
+  transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  position: relative;
+}
 
-/* Upload specific chunk coloring */
-.chunk-block.upload.filled { background-color: var(--color-primary-500); box-shadow: 0 0 5px var(--color-primary-500); }
-.chunk-block.upload.active { background-color: var(--color-primary-500); animation: pulse-chunk 1s infinite alternate; }
+/* Download styling */
+.modern-progress-fill.download {
+  background: linear-gradient(90deg, var(--color-success) 0%, #34d399 100%);
+  box-shadow: 0 0 10px rgba(16, 185, 129, 0.4);
+}
+
+/* Upload styling */
+.modern-progress-fill.upload {
+  background: linear-gradient(90deg, var(--color-primary-600) 0%, var(--color-primary-400) 100%);
+  box-shadow: 0 0 10px rgba(59, 130, 246, 0.4);
+}
+
+.modern-progress-fill.active::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  right: 0;
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0) 0%,
+    rgba(255, 255, 255, 0.3) 50%,
+    rgba(255, 255, 255, 0) 100%
+  );
+  animation: shimmer 1.5s infinite ease-in-out;
+}
+
+@keyframes shimmer {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
 
 .transfer-meta {
   display: flex;
@@ -92,15 +121,5 @@
   font-size: 0.8rem;
   color: var(--text-secondary);
   font-weight: 500;
-}
-
-@keyframes pulse-chunk {
-  from { opacity: 0.4; transform: scale(0.9); }
-  to { opacity: 1; transform: scale(1.1); }
-}
-
-@media (max-width: 640px) {
-  .chunk-block {
-    flex: 1 1 calc(4% - 2px); /* Break out into two rows on mobile */
-  }
+  margin-top: 8px;
 }

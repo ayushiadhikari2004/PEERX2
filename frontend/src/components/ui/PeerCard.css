@@ -134,3 +134,30 @@
 [data-theme='dark'] .peer-connect-btn:hover:not(:disabled) {
   background: rgba(99, 102, 241, 0.2);
 }
+
+.badge-blue {
+  background: rgba(59, 130, 246, 0.15);
+  color: var(--color-primary-600);
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 0.8rem;
+  font-family: inherit;
+}
+
+.badge-green {
+  background: rgba(16, 185, 129, 0.15);
+  color: var(--color-success);
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 0.8rem;
+  font-family: inherit;
+}
+
+.badge-purple {
+  background: rgba(139, 92, 246, 0.15);
+  color: #8b5cf6;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 0.8rem;
+  font-family: inherit;
+}

@@ -53,7 +53,7 @@ const DashboardPage = ({
     .map(f => ({
       name: f.name,
       meta: formatTimeAgo(f.receivedAt),
-      pill: 'downloaded',
+      pill: f.type === 'upload' ? 'shared' : 'received',
     }));
 
   const hasActiveTransfers = Array.isArray(activeTransfers) && activeTransfers.length > 0;
@@ -63,7 +63,6 @@ const DashboardPage = ({
       <div className="dashboard-main">
         <header className="page-header">
           <h1 className="page-greeting">{greeting}</h1>
-          <p className="page-subtext">Here's what's happening with your P2P network today.</p>
         </header>
 
         <div className="stats-grid">
@@ -84,8 +83,8 @@ const DashboardPage = ({
           <div className="stat-card clay-inset stat-peers">
             <div className="stat-icon stat-icon-green">💻</div>
             <div className="stat-info">
-              <span className="stat-number">{stats?.peersOnline ?? peersCount ?? 0}</span>
-              <span className="stat-label">Peers online</span>
+              <span className="stat-number">{peersCount}</span>
+              <span className="stat-label">Peers connected</span>
             </div>
           </div>
           <div className="stat-card clay-inset stat-storage">
@@ -177,7 +176,7 @@ const DashboardPage = ({
           <p className="widget-subtext">Send files directly to connected peers.</p>
           {hasActiveTransfers && (
             <div className="transfer-list">
-              {activeTransfers.map((t, i) => (
+              {activeTransfers.filter(t => t.status !== 'complete').map((t, i) => (
                 <div key={i} className="transfer-item">
                   <span className="transfer-name">{t.fileName || 'File'}</span>
                   <div className="progress-bar clay-inset">

@@ -882,8 +882,10 @@ app.delete("/api/folders/:id", auth, async (req, res) => {
         const folder = await Folder.findById(req.params.id);
         if (!folder) return res.status(404).json({ error: "Folder not found" });
 
-        const permission = await checkGroupPermission(req.user.userId, folder.group.toString(), 'moderator');
-        if (!permission.allowed && folder.owner.toString() !== req.user.userId) {
+        const groupId = folder.group ? (folder.group._id ? folder.group._id.toString() : folder.group.toString()) : null;
+        const ownerId = folder.owner ? (folder.owner._id ? folder.owner._id.toString() : folder.owner.toString()) : null;
+        const permission = groupId ? await checkGroupPermission(req.user.userId, groupId, 'moderator') : { allowed: false };
+        if (!permission.allowed && ownerId !== req.user.userId) {
             return res.status(403).json({ error: "Not authorized" });
         }
 
@@ -943,6 +945,17 @@ app.post("/api/files/upload", auth, upload.single("file"), async (req, res) => {
     const filePath = path.join(__dirname, "uploads", req.file.filename);
     const fileBuffer = fs.readFileSync(filePath);
 
+    // Extract text for search
+    const textContent = await extractTextContent(filePath, req.file.mimetype);
+    
+    // Generate preview
+    const previewFilename = await generatePreview(filePath, req.file.mimetype);
+
+    if (!group.encryptionKey) {
+      group.encryptionKey = crypto.randomBytes(32).toString("hex");
+      await group.save();
+    }
+
     // Encrypt file
     const iv = crypto.randomBytes(16);
     const cipher = crypto.createCipheriv(
@@ -954,12 +967,6 @@ app.post("/api/files/upload", auth, upload.single("file"), async (req, res) => {
     const encrypted = Buffer.concat([cipher.update(fileBuffer), cipher.final()]);
     const authTag = cipher.getAuthTag();
     fs.writeFileSync(filePath, encrypted);
-
-    // Extract text for search
-    const textContent = await extractTextContent(filePath, req.file.mimetype);
-    
-    // Generate preview
-    const previewFilename = await generatePreview(filePath, req.file.mimetype);
 
     await User.findByIdAndUpdate(req.user.userId, {
       $inc: { storageUsed: req.file.size }
@@ -1053,7 +1060,8 @@ app.get("/api/files/:id/preview", auth, async (req, res) => {
         const file = await File.findById(req.params.id);
         if (!file) return res.status(404).json({ error: "File not found" });
 
-        const permission = await checkGroupPermission(req.user.userId, file.group.toString());
+        const groupId = file.group ? (file.group._id ? file.group._id.toString() : file.group.toString()) : null;
+        const permission = groupId ? await checkGroupPermission(req.user.userId, groupId) : { allowed: false };
         if (!permission.allowed) return res.status(403).json({ error: permission.error });
 
         if (!file.hasPreview || !file.previewPath) {
@@ -1090,17 +1098,20 @@ app.get("/api/files/download/:id", auth, async (req, res) => {
 
     const encryptedData = fs.readFileSync(filePath);
 
-    const decipher = crypto.createDecipheriv(
-      ENCRYPTION_ALGORITHM,
-      Buffer.from(file.group.encryptionKey, "hex"),
-      Buffer.from(file.encryptionIV, "hex")
-    );
-    decipher.setAuthTag(Buffer.from(file.encryptionAuthTag, "hex"));
+    let decrypted = encryptedData;
+    if (file.encryptionIV && file.group.encryptionKey) {
+      const decipher = crypto.createDecipheriv(
+        ENCRYPTION_ALGORITHM,
+        Buffer.from(file.group.encryptionKey, "hex"),
+        Buffer.from(file.encryptionIV, "hex")
+      );
+      decipher.setAuthTag(Buffer.from(file.encryptionAuthTag, "hex"));
 
-    const decrypted = Buffer.concat([
-      decipher.update(encryptedData),
-      decipher.final()
-    ]);
+      decrypted = Buffer.concat([
+        decipher.update(encryptedData),
+        decipher.final()
+      ]);
+    }
 
     await File.findByIdAndUpdate(file._id, { $inc: { downloads: 1 } });
 
@@ -1125,8 +1136,10 @@ app.delete("/api/files/:id", auth, async (req, res) => {
     const file = await File.findById(req.params.id);
     if (!file) return res.status(404).json({ error: "File not found" });
 
-    const permission = await checkGroupPermission(req.user.userId, file.group.toString(), 'moderator');
-    if (!permission.allowed && file.owner.toString() !== req.user.userId) {
+    const groupId = file.group ? (file.group._id ? file.group._id.toString() : file.group.toString()) : null;
+    const ownerId = file.owner ? (file.owner._id ? file.owner._id.toString() : file.owner.toString()) : null;
+    const permission = groupId ? await checkGroupPermission(req.user.userId, groupId, 'moderator') : { allowed: false };
+    if (!permission.allowed && ownerId !== req.user.userId) {
       return res.status(403).json({ error: "Not authorized" });
     }
 
@@ -1171,8 +1184,11 @@ app.post("/api/files/:id/share", auth, async (req, res) => {
         const file = await File.findById(req.params.id);
         if (!file) return res.status(404).json({ error: "File not found" });
 
-        const permission = await checkGroupPermission(req.user.userId, file.group.toString());
-        if (!permission.allowed && file.owner.toString() !== req.user.userId) {
+        const groupId = file.group ? (file.group._id ? file.group._id.toString() : file.group.toString()) : null;
+        const ownerId = file.owner ? (file.owner._id ? file.owner._id.toString() : file.owner.toString()) : null;
+
+        const permission = groupId ? await checkGroupPermission(req.user.userId, groupId) : { allowed: false };
+        if (!permission.allowed && ownerId !== req.user.userId) {
             return res.status(403).json({ error: "Not authorized" });
         }
 
@@ -1263,17 +1279,21 @@ app.post("/api/share/:linkId/download", async (req, res) => {
         }
 
         const encryptedData = fs.readFileSync(filePath);
-        const decipher = crypto.createDecipheriv(
-            ENCRYPTION_ALGORITHM,
-            Buffer.from(file.group.encryptionKey, "hex"),
-            Buffer.from(file.encryptionIV, "hex")
-        );
-        decipher.setAuthTag(Buffer.from(file.encryptionAuthTag, "hex"));
 
-        const decrypted = Buffer.concat([
-            decipher.update(encryptedData),
-            decipher.final()
-        ]);
+        let decrypted = encryptedData;
+        if (file.encryptionIV && file.group.encryptionKey) {
+            const decipher = crypto.createDecipheriv(
+                ENCRYPTION_ALGORITHM,
+                Buffer.from(file.group.encryptionKey, "hex"),
+                Buffer.from(file.encryptionIV, "hex")
+            );
+            decipher.setAuthTag(Buffer.from(file.encryptionAuthTag, "hex"));
+
+            decrypted = Buffer.concat([
+                decipher.update(encryptedData),
+                decipher.final()
+            ]);
+        }
 
         await ShareLink.findByIdAndUpdate(shareLink._id, {
             $inc: { downloads: 1 }
@@ -1306,7 +1326,7 @@ app.get("/api/groups/:id/messages", auth, async (req, res) => {
         // Decrypt messages
         const group = permission.group;
         const decryptedMessages = messages.map(msg => {
-            if (msg.isEncrypted) {
+            if (msg.isEncrypted && msg.iv && group.encryptionKey) {
                 try {
                     const decipher = crypto.createDecipheriv(
                         'aes-256-cbc',
@@ -1364,6 +1384,11 @@ io.on('connection', (socket) => {
 
             const group = permission.group;
 
+            if (!group.encryptionKey) {
+                group.encryptionKey = crypto.randomBytes(32).toString('hex');
+                await group.save();
+            }
+
             // Encrypt message
             const iv = crypto.randomBytes(16);
             const cipher = crypto.createCipheriv(
@@ -1401,8 +1426,18 @@ io.on('connection', (socket) => {
     // App registers itself with {peerId, peerName}, then uses socket-to-socket signaling:
     // - webrtc-offer -> webrtc-answer
     // - webrtc-ice-candidate (ICE relay)
-    socket.on("register", ({ peerId, peerName } = {}) => {
+    socket.on("register", async ({ peerId, peerName } = {}) => {
       if (!peerId) return;
+      try {
+        const user = await User.findById(peerId);
+        if (user && user.groups) {
+          user.groups.forEach(gId => {
+            socket.join(`group-${gId.toString()}`);
+          });
+        }
+      } catch (err) {
+        console.error('Error joining groups:', err);
+      }
       webrtcRegisteredPeers.set(socket.id, {
         socketId: socket.id,
         peerId,
@@ -1428,6 +1463,20 @@ io.on('connection', (socket) => {
         answer,
         senderSocketId: socket.id,
       });
+    });
+
+    socket.on("p2p-chat-message", ({ message, targetSocketId } = {}) => {
+      console.log(`[p2p-chat-message] from ${socket.id} to ${targetSocketId}: ${message}`);
+      if (!message || !targetSocketId) return;
+      const sender = webrtcRegisteredPeers.get(socket.id);
+      console.log(`[p2p-chat-message] Sender name: ${sender?.peerName}`);
+      socket.to(targetSocketId).emit("p2p-chat-message", {
+        message,
+        senderSocketId: socket.id,
+        senderName: sender?.peerName || "Unknown",
+        timestamp: Date.now()
+      });
+      console.log(`[p2p-chat-message] Emitted to ${targetSocketId}`);
     });
 
     socket.on("webrtc-ice-candidate", ({ candidate, targetSocketId } = {}) => {
@@ -1530,7 +1579,7 @@ app.use((err, req, res, next) => {
 // ====================== ROOT ROUTES ======================
 app.get("/", (req, res) => {
   res.json({
-    message: "🌐 DeCloud Backend (Enhanced) is running!",
+    message: "🌐 Backend (Enhanced) is running!",
     status: "online",
     features: [
       "✅ Folder support",
@@ -1559,13 +1608,12 @@ app.get("/", (req, res) => {
 });
 
 app.get("/api", (req, res) => {
-  res.json({ message: "DeCloud API Enhanced", version: "2.0.0" });
+  res.json({ message: " API Enhanced", version: "2.0.0" });
 });
 
 // ====================== SERVER ======================
 server.listen(PORT, '0.0.0.0', () => {
   console.log("============================================================");
-  console.log("🌐 DeCloud Backend (Enhanced) Running");
   console.log(`🚀 Local:    http://localhost:${PORT}`);
   console.log(`🚀 Network:  http://${getLocalIP()}:${PORT}`);
   console.log(`🌐 API:      http://${getLocalIP()}:${PORT}/api`);

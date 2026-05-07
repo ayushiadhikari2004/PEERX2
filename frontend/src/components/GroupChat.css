@@ -145,7 +145,6 @@
 
 .chat-input-form input:focus {
   border-color: var(--primary);
-  background: var(--bg-primary);
   box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.1);
 }
 

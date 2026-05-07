@@ -21,16 +21,16 @@ const PeerCard = ({ peer, onConnect, isConnecting }) => {
       
       <div className="peer-details">
         <div className="detail-row">
-          <span className="detail-label">ID:</span>
-          <span className="detail-value truncate" title={peer.peerId}>{peer.peerId}</span>
+          <span className="detail-label">Network:</span>
+          <span className="detail-value badge-blue">WebRTC Direct</span>
         </div>
         <div className="detail-row">
-          <span className="detail-label">IP:</span>
-          <span className="detail-value">{peer.ip || 'Unknown'}</span>
+          <span className="detail-label">Security:</span>
+          <span className="detail-value badge-green">E2E Encrypted</span>
         </div>
         <div className="detail-row">
-          <span className="detail-label">Last Seen:</span>
-          <span className="detail-value">{new Date(peer.lastSeen).toLocaleTimeString()}</span>
+          <span className="detail-label">Protocol:</span>
+          <span className="detail-value badge-purple">P2P Channel</span>
         </div>
       </div>
       

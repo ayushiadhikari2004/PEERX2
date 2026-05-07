@@ -1,0 +1,18 @@
+1. Starting Tracker Server...
+2. Creating Torrent Metadata (chunk size 512KB)...
+Tracker Server running on port 8000
+3. Starting Peer 1 (Seeder)...
+Peer peer1 acting as server on 127.0.0.1:8001
+Peer peer1 seeding started for sample.txt [f8e30358c1f1b9d490c014f97c756049c0dc596c]
+4. Starting Peer 2 (Leecher) to demonstrate parallel download, integrity check, and reassembly...
+Peer peer2 starting download for sample.txt [f8e30358c1f1b9d490c014f97c756049c0dc596c]. Chunks missing: 5
+Peer peer2 acting as server on 127.0.0.1:8002
+[Peer peer2] Downloaded chunk 0 from peer1
+[Peer peer2] Downloaded chunk 4 from peer1
+[Peer peer2] Downloaded chunk 3 from peer1
+[Peer peer2] Downloaded chunk 1 from peer1
+[Peer peer2] Downloaded chunk 2 from peer1
+[Peer peer2] File completely downloaded and reassembled at: /home/ayushi_hp/PeerX/backend/bittorrent/p2_storage/sample_downloaded.txt
+Original file size: 2359296 bytes
+Downloaded file size: 2359296 bytes
+✅ SUCCESS! The file sharing system works perfectly.

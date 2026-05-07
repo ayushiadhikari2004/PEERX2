@@ -86,6 +86,16 @@ class WebRTCHandler {
         }
       }
     });
+
+    this.socket.on('p2p-chat-message', (data) => {
+      if (this.onChatMessage) {
+        this.onChatMessage(data);
+      }
+    });
+  }
+
+  sendChatMessage(targetSocketId, message) {
+    this.socket.emit('p2p-chat-message', { targetSocketId, message });
   }
 
   createPeerConnection(targetSocketId) {
@@ -137,6 +147,7 @@ class WebRTCHandler {
 
     channel.onopen = () => {
       console.log(`📡 Data Channel Open (${role}) with ${targetSocketId}`);
+      channel.binaryType = 'arraybuffer';
       if (typeof onOpen === 'function') onOpen();
     };
 
@@ -147,7 +158,7 @@ class WebRTCHandler {
           const msg = JSON.parse(event.data);
 
           // Sender: wait for receiver permission
-          if (role === 'sender' && msg.type === 'file-response') {
+          if (msg.type === 'file-response') {
             const resolver = this.pendingFileResponses.get(msg.transferId);
             if (resolver) {
               this.pendingFileResponses.delete(msg.transferId);
@@ -157,7 +168,7 @@ class WebRTCHandler {
           }
 
           // Receiver: file permission prompt on meta arrival
-          if (role === 'receiver' && msg.type === 'file-meta') {
+          if (msg.type === 'file-meta') {
             const transferId = msg.transferId;
             const name = msg.name;
             const size = msg.size;
@@ -228,11 +239,10 @@ class WebRTCHandler {
         }
       } else {
         // Binary chunk
-        if (role !== 'receiver') return;
         if (!receiverAccepted || currentTransferId === null) return;
 
         receiveBuffer.push(event.data);
-        receivedSize += event.data.byteLength;
+        receivedSize += event.data.byteLength || event.data.size || 0;
         receivedChunks++;
 
         const now = Date.now();

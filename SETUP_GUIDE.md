@@ -9,13 +9,13 @@
 
 ### 1. Install Backend Dependencies
 ```powershell
-cd "c:\Users\shail\Desktop\FY projects\decloud-project\backend"
+cd "c:\Users\shail\Desktop\FY projects\project\backend"
 npm install
 ```
 
 ### 2. Install Frontend Dependencies
 ```powershell
-cd "c:\Users\shail\Desktop\FY projects\decloud-project\frontend"
+cd "c:\Users\shail\Desktop\FY projects\project\frontend"
 npm install
 ```
 
@@ -51,7 +51,7 @@ You should see:
 ✅ MongoDB Connected
 🔍 Peer discovery active on UDP port 5001
 ============================================================
-🌐 DeCloud Backend (Enhanced) Running
+
 🚀 Local:    http://localhost:5000
 🚀 Network:  http://192.168.x.x:5000
 💬 WebSocket: Enabled for group chat
@@ -216,4 +216,4 @@ Check:
 
 ---
 
-**You're all set! Enjoy your enhanced DeCloud experience!** 🎉
+**You're all set! Enjoy your enhanced experience!** 🎉

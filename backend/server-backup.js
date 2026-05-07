@@ -905,7 +905,7 @@ app.get("/api/stats/dashboard", auth, async (req, res) => {
 // ====================== SERVER ======================
 app.listen(PORT, '0.0.0.0', () => {
   console.log("============================================================");
-  console.log("🌐 DeCloud Backend Running");
+  console.log("🌐 Backend Running");
   console.log(`🚀 Local:    http://localhost:${PORT}`);
   console.log(`🚀 Network:  http://${getLocalIP()}:${PORT}`);
   console.log(`🌐 API:      http://${getLocalIP()}:${PORT}/api`);
@@ -915,7 +915,7 @@ app.listen(PORT, '0.0.0.0', () => {
 // ====================== ROOT ROUTE (for testing) ======================
 app.get("/", (req, res) => {
   res.json({
-    message: "🌐 DeCloud Backend is running!",
+    message: "🌐 Backend is running!",
     status: "online",
     endpoints: {
       auth: "/api/auth/login, /api/auth/register, /api/auth/me",
@@ -932,5 +932,5 @@ app.get("/", (req, res) => {
 });
 
 app.get("/api", (req, res) => {
-  res.json({ message: "DeCloud API is running", version: "1.0.0" });
+  res.json({ message: " API is running", version: "1.0.0" });
 });

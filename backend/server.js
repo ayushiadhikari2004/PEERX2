@@ -1800,7 +1800,7 @@ app.use((err, req, res, next) => {
 // ====================== ROOT ROUTES ======================
 app.get("/", (req, res) => {
   res.json({
-    message: "🌐 DeCloud Backend (Enhanced) is running!",
+    message: "🌐 Backend (Enhanced) is running!",
     status: "online",
     features: [
       "✅ Folder support",
@@ -1829,13 +1829,13 @@ app.get("/", (req, res) => {
 });
 
 app.get("/api", (req, res) => {
-  res.json({ message: "DeCloud API Enhanced", version: "2.0.0" });
+  res.json({ message: " API Enhanced", version: "2.0.0" });
 });
 
 // ====================== SERVER ======================
 server.listen(PORT, '0.0.0.0', () => {
   console.log("============================================================");
-  console.log("🌐 DeCloud Backend (Enhanced) Running");
+  
   console.log(`🚀 Local:    http://localhost:${PORT}`);
   console.log(`🚀 Network:  http://${getLocalIP()}:${PORT}`);
   console.log(`🌐 API:      http://${getLocalIP()}:${PORT}/api`);

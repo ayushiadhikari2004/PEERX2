@@ -81,3 +81,16 @@
 .chat-empty p {
   margin-bottom: var(--space-4);
 }
+
+.chat-sections {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+}
+
+.chat-section h2 {
+  font-size: 1.25rem;
+  color: var(--text-primary);
+  margin-bottom: var(--space-4);
+  font-weight: 600;
+}

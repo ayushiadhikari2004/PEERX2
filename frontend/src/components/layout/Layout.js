@@ -20,6 +20,7 @@ const Layout = ({
   selectedGroup,
   selectGroup,
   activeTransfers = 0,
+  unreadChatCount = 0,
 }) => {
   return (
     <div className="layout-wrapper">
@@ -41,6 +42,7 @@ const Layout = ({
           setView={setView}
           peers={peers}
           activeTransfers={activeTransfers}
+          unreadChatCount={unreadChatCount}
         />
 
         <div 

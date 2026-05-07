@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { io } from 'socket.io-client';
 import './FileManager.css';
 import GroupChat from './GroupChat';
+import UploadDropzone from './ui/UploadDropzone';
 
 const FileManager = ({ group, user, API, BASE_API, onBack, notify }) => {
   const [files, setFiles] = useState([]);
@@ -44,6 +45,15 @@ const FileManager = ({ group, user, API, BASE_API, onBack, notify }) => {
     }
     return false;
   });
+
+  // Watch for sessionStorage navigation events when group context changes
+  useEffect(() => {
+    const shouldOpen = sessionStorage.getItem('peerx_open_chat');
+    if (shouldOpen) {
+      sessionStorage.removeItem('peerx_open_chat');
+      setShowChat(true);
+    }
+  }, [group]);
 
   // WebSocket connection
   const socketRef = useRef(null);
@@ -739,25 +749,33 @@ const FileManager = ({ group, user, API, BASE_API, onBack, notify }) => {
     setLoading(false);
   };
 
-  const uploadFileToFolder = async (e) => {
+  const uploadFileToFolder = async (e, filesToUpload) => {
     e.preventDefault();
-    if (!uploadFile) return notify('Select a file', 'error');
+    if (!filesToUpload || filesToUpload.length === 0) return notify('Select a file', 'error');
 
     setLoading(true);
-    const formData = new FormData();
-    formData.append('file', uploadFile);
-    formData.append('groupId', group.id);
-    formData.append('folderId', currentFolder?._id || '');
-    formData.append('tags', JSON.stringify(tags.split(',').map(t => t.trim()).filter(Boolean)));
+    let successCount = 0;
 
-    try {
-      await API.post('/files/upload', formData);
-      notify('File uploaded successfully!');
+    for (const currentFile of filesToUpload) {
+      const formData = new FormData();
+      formData.append('file', currentFile);
+      formData.append('groupId', group.id);
+      formData.append('folderId', currentFolder?._id || '');
+      formData.append('tags', JSON.stringify(tags.split(',').map(t => t.trim()).filter(Boolean)));
+
+      try {
+        await API.post('/files/upload', formData);
+        successCount++;
+      } catch (err) {
+        notify(err.response?.data?.error || `Failed to upload ${currentFile.name}`, 'error');
+      }
+    }
+
+    if (successCount > 0) {
+      notify(`Successfully uploaded ${successCount} file(s)!`);
       setUploadFile(null);
       setTags('');
       fetchFiles();
-    } catch (err) {
-      notify(err.response?.data?.error || 'Upload failed', 'error');
     }
     setLoading(false);
   };
@@ -974,26 +992,17 @@ const FileManager = ({ group, user, API, BASE_API, onBack, notify }) => {
           {/* Upload Section */}
           {!searchQuery && (
             <div className="upload-section">
-              <form onSubmit={uploadFileToFolder} className="upload-form">
-                <input
-                  type="file"
-                  onChange={(e) => setUploadFile(e.target.files[0])}
-                  className="file-input"
-                />
-                <input
-                  type="text"
-                  placeholder="Tags (comma-separated)"
-                  value={tags}
-                  onChange={(e) => setTags(e.target.value)}
-                  className="tags-input"
-                />
-                <button type="submit" disabled={loading || !uploadFile} className="btn-primary">
-                  Upload
+              <UploadDropzone
+                onUpload={uploadFileToFolder}
+                tags={tags}
+                setTags={setTags}
+                loading={loading}
+              />
+              <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '16px' }}>
+                <button onClick={() => setShowNewFolder(true)} className="btn-secondary">
+                  📁 New Folder
                 </button>
-              </form>
-              <button onClick={() => setShowNewFolder(true)} className="btn-secondary">
-                📁 New Folder
-              </button>
+              </div>
             </div>
           )}
 

@@ -1,7 +1,6 @@
 import React, { useMemo } from 'react';
 import './TransferProgress.css';
 
-const CHUNKS_TO_RENDER = 50; // We'll divide the progress visually into 50 blocks
 
 const formatSpeed = (bytesPerSec) => {
     if (!bytesPerSec || bytesPerSec === 0) return '0 B/s';
@@ -18,11 +17,6 @@ const TransferProgress = ({ activeTransfers, embedded = false }) => {
       {!embedded && <h3 className="transfer-panel-title">Active P2P Transfers</h3>}
       <div className="transfer-list">
         {activeTransfers.map((transfer) => {
-          
-          // Calculate how many physical visual chunks should be 'filled'
-          const fillRatio = transfer.progress / 100;
-          const filledChunks = Math.floor(fillRatio * CHUNKS_TO_RENDER);
-
           return (
             <div key={transfer.id} className={`transfer-item ${transfer.status === 'complete' ? 'completed' : ''}`}>
               <div className="transfer-info">
@@ -30,24 +24,12 @@ const TransferProgress = ({ activeTransfers, embedded = false }) => {
                 <span className="transfer-percentage">{Math.round(transfer.progress)}%</span>
               </div>
               
-              {/* Chunk visualization grid */}
-              <div className="chunk-grid-container">
-                {Array.from({ length: CHUNKS_TO_RENDER }).map((_, idx) => {
-                  let statusClass = 'empty';
-                  if (idx < filledChunks) {
-                    statusClass = 'filled';
-                  } else if (idx === filledChunks && (transfer.status === 'receiving' || transfer.status === 'sending')) {
-                    statusClass = 'active'; // The current chunk being downloaded/uploaded
-                  }
-                  
-                  return (
-                    <div 
-                      key={idx} 
-                      className={`chunk-block ${statusClass} ${transfer.type}`}
-                      title={`Chunk ${idx + 1}/${CHUNKS_TO_RENDER}`}
-                    />
-                  );
-                })}
+              {/* Modern continuous progress bar */}
+              <div className="modern-progress-track">
+                <div 
+                  className={`modern-progress-fill ${transfer.type} ${transfer.status === 'complete' ? 'complete' : 'active'}`}
+                  style={{ width: `${Math.min(100, Math.max(0, transfer.progress))}%` }}
+                />
               </div>
 
               <div className="transfer-meta" style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', color: 'var(--text-light)', marginTop: '0.5rem' }}>

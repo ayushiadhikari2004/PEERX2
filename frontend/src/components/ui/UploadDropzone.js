@@ -34,7 +34,7 @@ const UploadDropzone = ({ onUpload, tags, setTags, loading }) => {
   const handleSubmit = (e) => {
     e.preventDefault();
     if (selectedFile) {
-      onUpload(e, selectedFile);
+      onUpload(e, [selectedFile]);
       setSelectedFile(null);
     }
   };

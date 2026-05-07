@@ -53,7 +53,26 @@ function AppContent() {
   const [notification, setNotification] = useState(null);
 
   // Data states
-  const [files, setFiles] = useState([]); // Local received files
+  const [files, setFiles] = useState(() => {
+    try {
+      const saved = localStorage.getItem('peerx_files');
+      return saved ? JSON.parse(saved) : [];
+    } catch { return []; }
+  });
+  const [activeTransfers, setActiveTransfers] = useState(() => {
+    try {
+      const saved = localStorage.getItem('peerx_transfers');
+      return saved ? JSON.parse(saved) : [];
+    } catch { return []; }
+  });
+
+  useEffect(() => {
+    localStorage.setItem('peerx_files', JSON.stringify(files));
+  }, [files]);
+
+  useEffect(() => {
+    localStorage.setItem('peerx_transfers', JSON.stringify(activeTransfers));
+  }, [activeTransfers]);
   const [peers, setPeers] = useState([]);
   const [stats, setStats] = useState({ fileCount: 0, peersOnline: 0 });
 
@@ -65,13 +84,13 @@ function AppContent() {
   const [groupPrivacy, setGroupPrivacy] = useState(true);
   const [inviteCode, setInviteCode] = useState("");
 
-  // Transfer states for TransferProgress visualizer
-  const [activeTransfers, setActiveTransfers] = useState([]);
-  
+
   // WebRTC
   const [webrtc, setWebrtc] = useState(null);
   const [webrtcPeers, setWebrtcPeers] = useState([]);
   const [incomingOffers, setIncomingOffers] = useState([]);
+  const [p2pMessages, setP2pMessages] = useState([]);
+  const [unreadChatCount, setUnreadChatCount] = useState(0);
 
   /** ======================
    *  INIT & REAL-TIME
@@ -146,9 +165,6 @@ function AppContent() {
       formData.append("tags", JSON.stringify(["p2p", "received"]));
 
       await API.post("/files/upload", formData);
-      // Show file immediately by switching receiver to Network Share group
-      setSelectedGroup(networkGroup);
-      setView("file_manager");
       notify(`Received via P2P: ${name}`, "success");
     } catch (err) {
       console.error("Failed to persist received P2P file:", err);
@@ -179,30 +195,25 @@ function AppContent() {
             if (index >= 0) {
               const updated = [...prev];
               updated[index] = progressUpdate;
-              // Add to local files if complete and download
-              if (progressUpdate.status === 'complete' && progressUpdate.type === 'download') {
+              // Add to local files if complete (both uploads and downloads)
+              if (progressUpdate.status === 'complete') {
                   setFiles(curr => {
-                      const exists = curr.find(f => f.name === progressUpdate.fileName);
+                      const exists = curr.find(f => f.name === progressUpdate.fileName && f.type === progressUpdate.type);
                       if (!exists) {
                           return [{
                               id: Date.now() + Math.random(),
                               name: progressUpdate.fileName,
                               size: progressUpdate.totalSize,
+                              type: progressUpdate.type,
                               receivedAt: new Date().toISOString()
                           }, ...curr];
                       }
                       return curr;
                   });
               }
-              // Remove complete transfers after 3 seconds
-              if (progressUpdate.status === 'complete') {
-                setTimeout(() => {
-                  setActiveTransfers(curr => curr.filter(t => t.id !== progressUpdate.id));
-                }, 3000);
-              }
               return updated;
             } else {
-              if (progressUpdate.status === 'complete') return prev; // don't add completed ones right away
+              // Now we safely keep complete instances that finish immediately
               return [...prev, progressUpdate];
             }
           });
@@ -223,6 +234,26 @@ function AppContent() {
         },
         importReceivedFileToNetworkShare
       );
+      handler.onChatMessage = (msgData) => {
+        console.log("📥 P2P Message Received in App.js:", msgData);
+        setP2pMessages((prev) => {
+          return [...prev, msgData];
+        });
+        
+        // Always show the popup notification
+        notify(`New message from ${msgData.senderName}: ${msgData.message}`, "success");
+        
+        // Increment unread count (we can't easily check `view` here due to closure, 
+        // so we'll just increment it and clear it when the user opens the Chat view)
+        setUnreadChatCount(prev => prev + 1);
+      };
+
+      handler.socket.on('file:uploaded', (data) => {
+        if (data.uploader !== (user.id || user._id)) {
+          notify(`New file uploaded to group: ${data.file?.originalName || 'Unknown'}`, "success");
+        }
+      });
+
       setWebrtc(handler);
 
       return () => {
@@ -232,6 +263,8 @@ function AppContent() {
     }
   }, [user]); // user is enough dependency here since we just want it once on login
 
+
+  const clearTransfer = (id) => setActiveTransfers(curr => curr.filter(t => t.id !== id));
 
   /** ======================
    *  NOTIFICATIONS
@@ -473,12 +506,16 @@ function AppContent() {
       sidebarOpen={sidebarOpen}
       setSidebarOpen={setSidebarOpen}
       view={view}
-      setView={setView}
+      setView={(v) => {
+        setView(v);
+        if (v === 'chat') setUnreadChatCount(0);
+      }}
       groups={groups}
       peers={webrtcPeers.length > 0 ? webrtcPeers : peers}
       selectedGroup={selectedGroup}
       selectGroup={(g) => { setSelectedGroup(g); setView("file_manager"); }}
       activeTransfers={activeTransfers.length}
+      unreadChatCount={unreadChatCount}
     >
 
       {view === "dashboard" && (
@@ -558,12 +595,17 @@ function AppContent() {
       )}
 
       {view === "transfers" && (
-          <TransfersPage activeTransfers={activeTransfers} />
+          <TransfersPage activeTransfers={activeTransfers} clearTransfer={clearTransfer} />
       )}
 
       {view === "chat" && (
         <ChatPage
           groups={groups}
+          peers={webrtcPeers.length > 0 ? webrtcPeers : peers}
+          user={user}
+          webrtc={webrtc}
+          p2pMessages={p2pMessages}
+          setP2pMessages={setP2pMessages}
           selectGroup={(g) => { setSelectedGroup(g); setView("file_manager"); }}
           setView={setView}
         />

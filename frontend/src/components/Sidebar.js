@@ -8,13 +8,15 @@ const Sidebar = ({
   setView,
   peers,
   activeTransfers = 0,
+  unreadChatCount = 0,
 }) => {
   const navItems = [
     { id: "dashboard", label: "Dashboard", icon: "📊" },
     { id: "peers", label: "Peers", icon: "💻", count: peers?.length || 0 },
+    { id: "groups", label: "Groups", icon: "👥" },
     { id: "upload", label: "Upload to Peer", icon: "📤" },
     { id: "transfers", label: "Transfers", icon: "🔄", count: activeTransfers },
-    { id: "chat", label: "Chat", icon: "💬" },
+    { id: "chat", label: "Chat", icon: "💬", count: unreadChatCount },
     { id: "files", label: "Received Files", icon: "📁" },
   ];
 

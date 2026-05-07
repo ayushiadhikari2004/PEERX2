@@ -20,8 +20,13 @@ const UploadPage = ({ peers, webrtc, notify, setView }) => {
       return notify("Peer is offline or invalid.", "error");
     }
 
+    const fileToSend = Array.isArray(file) ? file[0] : file;
+    if (!fileToSend) {
+      return notify("Please select a file.", "error");
+    }
+
     notify(`Initiating direct P2P transfer to ${peerObj.peerName}`);
-    webrtc.sendFile(selectedPeer, file);
+    webrtc.sendFile(selectedPeer, fileToSend);
     setView("transfers"); // Jump to transfers page to see progress
   };
 
